@@ -28,7 +28,7 @@ Setting and or adjusting time requires root privileges.
 ### Usage
 
 ```
-Usage: htitpdate [-adhs] [-p #] <URL> ...
+Usage: httpdate [-adhs] [-p #] <URL> ...
 
   -a    adjust time gradually
   -d    debug/verbose output

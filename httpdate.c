@@ -16,7 +16,7 @@
 static int verbose = 0;
 
 static size_t getremotetime(char buffer[MAXHEADERSIZE], size_t size,
-                     size_t nmemb, char remotetime[25]) {
+  size_t nmemb, char remotetime[25]) {
   char *pdate = NULL;
 
   if ((pdate = strcasestr(buffer, "date: ")) != NULL && strlen(pdate) >= 35) {
@@ -236,6 +236,5 @@ int main(int argc, char *argv[]) {
   if (setmode == 2) adjustclock((double)offset);
 
   printf("Offset: %.3f s\n", avgtime);
-
   return 0;
 }

@@ -13,7 +13,7 @@ The above one-liner might give unexpected results when,
 
 httpdate solves that by allowing multiple URLs as time source, eliminating 'false tickers' and gradually adjusting time.
 
-HTTP, HTTPS, proxies servers are all supported, thanks to [libcurl](https://curl.se/libcurl/).
+HTTP, HTTP/2, HTTP/3, HTTPS, proxies servers are all supported, thanks to [libcurl](https://curl.se/libcurl/).
 
 ### Install
 

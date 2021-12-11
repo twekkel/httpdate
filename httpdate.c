@@ -21,7 +21,7 @@ static size_t getremotetime(char buffer[MAXHEADERSIZE], size_t size,
 
   if ((pdate = strcasestr(buffer, "date: ")) != NULL && strlen(pdate) >= 35) {
     strncpy(remotetime, pdate + 11, 24);
-    if (verbose) printf("%s, ", remotetime);
+    if (verbose) printf("%s", remotetime);
   }
   return size*nmemb;
 }
@@ -90,7 +90,7 @@ static double bisect(char url[128], int precision) {
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
     list = curl_slist_append(list, "Connection: keep-alive");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-    if (verbose) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+    if (verbose > 1) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, getremotetime);
@@ -103,6 +103,7 @@ static double bisect(char url[128], int precision) {
       curl_easy_cleanup(curl);
       return(LONG_MAX);
     }
+    if (verbose) puts("");
 
     long offset  = 0;
     long prev_offset = 0;
@@ -110,7 +111,7 @@ static double bisect(char url[128], int precision) {
     when = 0;
     do {
       clock_gettime( CLOCK_REALTIME, &timeofday);
-      if (verbose) printf("when: %ld now: %ld\n", when, timeofday.tv_nsec);
+      if (verbose) printf("when: %09ld now: %ld\n", when, timeofday.tv_nsec);
       sleepspec.tv_sec = 0;
       if (when >= timeofday.tv_nsec) {
         sleepspec.tv_nsec = when - timeofday.tv_nsec;
@@ -127,7 +128,7 @@ static double bisect(char url[128], int precision) {
       } else {
         polls++;
         offset = offset_sec(remotetime);
-        if (verbose) printf("%s\n", url);
+        if (verbose) printf(", %s\n", url);
 
         subsec >>= 1;
         if (polls>1) {
@@ -178,7 +179,7 @@ int main(int argc, char *argv[]) {
         setmode = 2;
         break;
       case 'd':
-        verbose = 1;
+        if (verbose < 2) verbose++;
         break;
       case 'h':
         showhelp();

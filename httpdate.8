@@ -1,0 +1,63 @@
+.TH "HTTPDATE" "8" "version 0.0.1" "httpdate"
+.SH "NAME"
+httpdate \- Time synchronization
+.SH "SYNOPSIS"
+.B httpdate
+[\-adhsv] [\-p precision] [URL] ...
+.SH "DESCRIPTION"
+Httpdate retrieves the date and time from remote machines via a network. Htpdate works through proxy servers. Accuracy of httpdate will be usually within 100 millsecond. If this is not good enough for you, try the ntpd package.
+
+Httpdate uses libcurl, therefore HTTP, HTTPS, HTTP/2, proxy server... is supported.
+.fi
+.SH OPTIONS
+.TP
+.I \-a
+Adjust time smoothly.
+.TP
+.I \-d
+Turn debug/verbose output on.
+.TP
+.I \-h
+Show help.
+.TP
+.I \-p
+Precision specifies the number of bisect operations to find the 'second boundary'. Default is 6. With 10 the accuracy is in the millisecond range. Use with caution.
+.TP
+.I \-s
+Set time immediate.
+.TP
+.I \-v
+Show version.
+.TP
+.I URL
+Path to resource, e.g. https://www.example.com/httpdate.html
+.SH "ENVIRONMENT"
+Httpdate supports proxies for HTTP(S) connections. The standard way to specify the proxy location, which httpdate recognizes, is using the following environment variable:
+.IP "\fBhttp_proxy\fR" 4
+.IX Item "http_proxy"
+.PD
+If set, the http_proxy variable should contain the URL of the proxy for HTTP connections.
+.SH "EXAMPLES"
+Request time from web server (don't update local clock):
+.br
+\&    httpdate http://www.example.com
+.P
+Debug/verbose output:
+.br
+\&    httpdate \-d www.example.com
+.P
+Set time/clock:
+.br
+\&    httpdate \-s http://www.example.com
+.P
+.br
+Adjust time smoothly (e.g. running from cron):
+.br
+\&    httpdate \-a www.example.com:80/httpdate.html https://example.com
+.P
+.SH "AUTHOR"
+Eddy Vervest <eddy@vervest.org>, https://www.vervest.org/htp
+.SH "SEE ALSO"
+.BR rdate,
+.BR timed,
+.BR ntpd

@@ -40,6 +40,18 @@ Usage: httpdate [-adhs] [-p #] <URL> ...
 
 Httpdate tries to approximate the 'second boundary'. With every request it moves closer to that boundary, by default in 6 steps.
 
+ntpdate versus httpdate
+
+```
+httpdate -p 10 xs4all.nl
+Offset: -0.150 s
+
+ntpdate -q ntp.xs4all.nl
+server 2001:888:0:7::2, stratum 2, offset -0.153365, delay 0.02866
+server 194.109.6.2, stratum 2, offset -0.153384, delay 0.02867
+11 Dec 15:09:19 ntpdate[14535]: adjust time server 2001:888:0:7::2 offset -0.153365 sec
+```
+
 ### See also
 
 * https://github.com/twekkel/htpdate - daemon using similar idea

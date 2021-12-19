@@ -55,4 +55,4 @@ server 194.109.6.2, stratum 2, offset -0.153384, delay 0.02867
 ### See also
 
 * https://github.com/twekkel/htpdate - daemon using similar idea
-* https://github.com/angeloc/htpdate - fork of htpdate, with HTTPS support
+* https://github.com/angeloc/htpdate - fork of htpdate

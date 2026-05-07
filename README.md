@@ -6,18 +6,18 @@ date -s "`curl --head -s https://example.com | grep -i "Date: " | cut -d' ' -f2-
 
 ### Longer... httpdate
 
-The above one-liner might give unexpected results when,
-* site is not reachable
-* site has wrong time
-* steps/jumps (backwards!) in time
+The above one-liner might give unexpected results when;
+* The site is not reachable
+* The site has wrong time
+* There are steps/jumps (especially backwards!) in time
 
-httpdate solves that by allowing multiple URLs as time source, eliminating 'false tickers' and gradually adjusting time.
+httpdate solves that by allowing multiple URLs as time sourcea, eliminating falsetickers and gradually adjusting the time.
 
 HTTP, HTTP/2, HTTP/3, HTTPS, proxies servers are all supported, thanks to [libcurl](https://curl.se/libcurl/).
 
 ### Install
 
-Make sure libcurl-dev/libcurl4-gnutls-dev (or similar) libraries is installed.
+Make sure libcurl-dev/libcurl4-gnutls-dev (or similar) libraries are installed.
 
 ```
 make
@@ -54,5 +54,4 @@ server 194.109.6.2, stratum 2, offset -0.153384, delay 0.02867
 
 ### See also
 
-* https://github.com/twekkel/htpdate - daemon using similar idea
-* https://github.com/angeloc/htpdate - fork of htpdate
+* https://github.com/twekkel/htpdate - daemon using similar idea, without the heavy libcurl

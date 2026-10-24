@@ -15,15 +15,23 @@
 
 static int verbose = 0;
 
-static size_t getremotetime(char buffer[MAXHEADERSIZE], size_t size,
-  size_t nmemb, char remotetime[25]) {
-  char *pdate = NULL;
+static size_t getremotetime(void *contents, size_t size,
+  size_t nmemb, void *userdata) {
+  const char *buffer = contents;
+  char *remotetime = userdata;
+  const char *pdate;
+  size_t len = size * nmemb;
 
-  if ((pdate = strcasestr(buffer, "date: ")) != NULL && strlen(pdate) >= 35) {
-    strncpy(remotetime, pdate + 11, 24);
-    if (verbose) printf("%s", remotetime);
+  pdate = strcasestr(buffer, "date: ");
+  if (pdate && len >= 35) {
+    memcpy(remotetime, pdate + 11, 24);
+    remotetime[24] = '\0';
+
+    if (verbose)
+      printf("%s", remotetime);
   }
-  return size*nmemb;
+
+  return len;
 }
 
 static int offset_sec(char remotetime[25]) {
@@ -85,12 +93,12 @@ static double bisect(char url[128], int precision) {
   curl = curl_easy_init();
   if(curl) {
     struct curl_slist *list = NULL;
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 1);
-    curl_easy_setopt(curl, CURLOPT_HEADER, 1);
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
     list = curl_slist_append(list, "Connection: keep-alive");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-    if (verbose > 1) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+    if (verbose > 1) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, getremotetime);

@@ -12,4 +12,4 @@ jobs:
       - name: build
         run: make
       - name: test
-        run: ./htpdate example.com example.net https://example.com
+        run: ./httpdate example.com example.net https://example.com

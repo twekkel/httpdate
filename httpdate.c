@@ -367,6 +367,7 @@ int main(int argc, char *argv[]) {
         daemonize = 1;
         foreground = 1;
         logmode = 0;
+        if (setmode != 3) setmode = 2;
         break;
       case 'h':
         showhelp();

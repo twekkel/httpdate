@@ -25,7 +25,7 @@
 #define MAXURLS                 16
 #define NS_SEC                  1000000000L
 #define MAX_DRIFT               32768000        /* 500 PPM */
-#define VERSION                 "1.2.0"
+#define VERSION                 "1.0.0"
 
 static int logmode     = 0;
 static char *proxy_url = NULL;

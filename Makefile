@@ -1,35 +1,34 @@
+CC      ?= cc
+CFLAGS  ?= -Wall -std=c11 -pedantic -O2 -flto
+LDFLAGS ?=
+LIBS    ?= -lcurl -lm
+
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
-
-CC     ?= gcc
-CFLAGS ?= -Wall -std=c11 -pedantic -O2 -flto
-LIBS   := -lcurl -lm
-
-INSTALL = install
-STRIP   = strip -s
-
-SRC = httpdate.c
-OBJ = httpdate.o
+MANDIR ?= $(PREFIX)/share/man
 
 all: httpdate
 
-httpdate: $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+httpdate: httpdate.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ httpdate.o $(LIBS)
 
-httpdate.o: httpdate.c
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 test: httpdate
-	./httpdate https://www.example.com
+	./httpdate example.com example.net https://example.com
 
-install: httpdate
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 755 httpdate $(DESTDIR)$(BINDIR)/httpdate
-	$(STRIP) $(DESTDIR)$(BINDIR)/httpdate
+install: all
+	mkdir -p $(DESTDIR)$(BINDIR)
+	mkdir -p $(DESTDIR)$(MANDIR)/man8
+	install -m 755 httpdate $(DESTDIR)$(BINDIR)/httpdate
+	install -m 644 httpdate.8 $(DESTDIR)$(MANDIR)/man8/httpdate.8
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/httpdate
+	rm -f $(DESTDIR)$(MANDIR)/man8/httpdate.8
 
 clean:
-	rm -f httpdate $(OBJ)
+	rm -f httpdate *.o
 
-.PHONY: all test install uninstall clean
+.PHONY: all clean install test uninstall

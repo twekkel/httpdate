@@ -1,0 +1,13 @@
+# Compiled object files
+*.o
+
+# Binary output
+httpdate
+
+# IDE and editor directories/files
+.vscode/
+.idea/
+*~
+*.swp
+*.swo
+.DS_Store

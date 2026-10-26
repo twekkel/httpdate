@@ -3,73 +3,89 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-adhDFhsx] [\-p precision] [\-P proxy] [URLs] ...
+[\-adDFhnsvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
-Httpdate retrieves the date and time from remote web servers via HTTP or HTTPS. Httpdate works through proxy servers and uses libcurl for secure and robust protocol support.
+Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
-Accuracy of httpdate depends on network latency and precision settings, typically achieving sub-second to millisecond accuracy. If this is not sufficient for your requirements, consider using the ntpd or chrony package.
-.SH OPTIONS
+HTTP timestamps have a resolution of one second. To find the sub-second offset, httpdate queries each server several times at different positions within the second (see \fB\-p\fR) and locates the second boundary by bisection. With several servers, the median offset is used to discard servers that disagree with it by more than 0.5 seconds. The remaining offsets are averaged, weighted by the inverse of their round trip time. With exactly two servers that disagree by more than 0.5 seconds, the one with the shorter round trip time is used.
+.P
+By default httpdate only displays the offset and does not change the clock. Use \fB\-a\fR, \fB\-s\fR, \fB\-x\fR or \fB\-D\fR to change it. Changing the clock requires root privileges.
+.P
+Accuracy depends on network latency and on the precision setting (resolution of about 1/2^precision seconds, 125 ms by default), and is better with several servers. If this is not sufficient, use ntpd or chrony.
+.SH "OPTIONS"
 .TP
-.I \-a
-Adjust time gradually (smoothly) using the system clock adjustment interface.
+.B \-a
+Adjust the clock gradually (slew) with adjtime(3) instead of stepping it. Offsets smaller than one second are applied at half strength, so that measurement noise does not make the clock oscillate. Repeat the run, or use daemon mode, to converge.
 .TP
-.I \-d
-Turn debug/verbose output on (can be specified multiple times for increased verbosity).
+.B \-d
+Turn debug/verbose output on. Can be given up to three times: one level shows the offset and round trip time per server, two levels also show every bisection step, and three levels turn on libcurl's verbose output.
 .TP
-.I \-D
-Run as a daemon for continuous background time synchronization.
+.B \-D
+Run as a daemon: fork into the background, log to syslog and poll continuously. Implies \fB\-a\fR unless \fB\-x\fR is given. After a correction the next poll follows in about 17 minutes; while the clock stays in sync the interval is doubled at each poll, up to about 18 hours.
 .TP
-.I \-F
-Run the daemon in the foreground (e.g. for systemd).
+.B \-F
+Run the daemon in the foreground, without forking, and log to the terminal (for example under systemd).
 .TP
-.I \-h
+.B \-h
 Show help information and exit.
 .TP
-.I \-p precision
-Precision specifies the number of bisect operations (1 to 9, default: 3) to find the 'second boundary'. Higher precision increases accuracy.
+.B \-n
+Ignore proxy environment variables. An explicit \fB\-P\fR still applies.
 .TP
-.I \-P proxy
-Use a proxy server for connections (e.g., http://proxy:port or host:port).
+.BI \-p " precision"
+Number of bisection steps per server, from 1 to 9 (default 3). Each step halves the uncertainty of the second boundary, so the resolution is about 1/2^\fIprecision\fR seconds. A higher precision increases accuracy and the time needed per server. Offsets smaller than this resolution are ignored.
 .TP
-.I \-s
-Set time immediately.
+.BI \-P " proxy"
+Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Overrides the proxy environment variables.
 .TP
-.I \-v
+.B \-s
+Set (step) the clock immediately. Offsets are applied in full, also when smaller than one second. Not recommended together with \fB\-D\fR.
+.TP
+.B \-v
 Show version information and exit.
 .TP
-.I \-x
-Adjust time and clock frequency (drift correction), designed for continuous operation in daemon mode (`-D`).
+.B \-x
+Adjust the clock and compensate for the systematic clock drift by adjusting the clock frequency. The frequency is only corrected in daemon mode (\fB\-D\fR or \fB\-F\fR). When the offset is smaller than 0.5 seconds the kernel clock is marked as synchronized.
 .TP
 .I URL
-Path to resource or web server endpoint, e.g., https://pool.ntp.org or https://time.google.com
+Web server to query, for example \fIhttps://www.example.com\fR. At least one and at most 16 URLs are accepted. In general 3 to 5 servers give a redundant and accurate setup.
 .SH "ENVIRONMENT"
-Httpdate supports standard proxy environment variables for HTTP(S) connections:
-.IP "\fBhttp_proxy\fR" 4
-.IX Item "http_proxy"
-.PD
-If set, the http_proxy variable should contain the URL of the proxy for HTTP connections.
+Unless \fB\-P\fR or \fB\-n\fR is given, libcurl takes the proxy settings from the standard environment variables:
+.TP
+.B http_proxy, https_proxy, all_proxy
+URL of the proxy to use for the respective protocol. Only the lowercase form of \fBhttp_proxy\fR is honoured.
+.TP
+.B no_proxy
+Comma-separated list of hosts that are contacted directly.
+.SH "EXIT STATUS"
+Exit status is 1 on usage errors or, when not running as daemon, if no server gave a usable answer. Otherwise it is 0.
 .SH "EXAMPLES"
 Request time from multiple web servers without modifying the local clock:
 .br
 \&    httpdate example.com http://example.com https://example.com
 .P
-Run as daemon mode in the foreground with drift correction (e.g. for systemd):
-.br
-\&    httpdate \-F \-x https://example.com
-.P
 Debug/verbose output:
 .br
 \&    httpdate \-d \-d example.com
 .P
-Set time immediately:
+Set time immediately, using several servers:
 .br
-\&    httpdate \-s example.com
+\&    httpdate \-s www.example.com www.example.net www.example.org
 .P
+Run as daemon in the foreground with drift correction (e.g. for systemd):
+.br
+\&    httpdate \-F \-x https://www.example.com
+.P
+Use a proxy server:
+.br
+\&    httpdate \-P proxy.example.com:3128 https://www.example.com
 .SH "AUTHOR"
 Eddy Vervest
 .SH "SEE ALSO"
-.BR htpdate,
-.BR rdate,
-.BR timed,
-.BR ntpd,
-.BR systemd
+.BR htpdate (8),
+.BR rdate (1),
+.BR ntpd (8),
+.BR chronyd (8),
+.BR timed (8),
+.BR adjtime (3),
+.BR systemd (1)

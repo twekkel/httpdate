@@ -28,6 +28,7 @@
 #define VERSION                 "1.0.0"
 
 static int logmode     = 0;
+static int noproxy     = 0;
 static char *proxy_url = NULL;
 static int verbose     = 0;
 
@@ -209,6 +210,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
   if (proxy_url)
     curl_easy_setopt(curl, CURLOPT_PROXY, proxy_url);
+  else if (noproxy)
+    curl_easy_setopt(curl, CURLOPT_PROXY, "");
   curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
   curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -328,12 +331,13 @@ cleanup:
 
 static void showhelp(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-adDFhsvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-adDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -a    adjust time gradually\n"
          "  -d    debug/verbose output\n"
          "  -D    run as daemon\n"
          "  -F    run daemon in foreground\n"
          "  -h    help\n"
+         "  -n    ignore proxy environment variables\n"
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
          "  -s    set time\n"
@@ -352,7 +356,7 @@ int main(int argc, char *argv[]) {
   time_t    starttime  = 0;
 
   int       param;
-  while ((param = getopt(argc, argv, "adhDFp:P:svx")) != -1)
+  while ((param = getopt(argc, argv, "adhDFnp:P:svx")) != -1)
     switch(param) {
       case 'a':
         setmode = 2;
@@ -374,6 +378,9 @@ int main(int argc, char *argv[]) {
       case 'h':
         showhelp();
         exit(0);
+      case 'n':
+        noproxy = 1;
+        break;
       case 'p':
         precision = atoi(optarg);
         if (precision < 1 || precision > 9) {

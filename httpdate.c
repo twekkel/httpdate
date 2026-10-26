@@ -207,7 +207,9 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
-  curl_easy_setopt(curl, CURLOPT_PROXY, proxy_url ? proxy_url : "");
+  if (proxy_url)
+    curl_easy_setopt(curl, CURLOPT_PROXY, proxy_url);
+  curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
   curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);

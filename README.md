@@ -1,5 +1,7 @@
 # httpdate
 
+[![main](https://github.com/twekkel/httpdate/actions/workflows/main.yml/badge.svg)](https://github.com/twekkel/httpdate/actions/workflows/main.yml)
+
 `httpdate` is the modern successor to [`htpdate`](https://github.com/twekkel/htpdate). Like its predecessor, it synchronizes time using HTTP date headers, making it useful on networks where NTP is blocked but web access through HTTP or HTTPS proxies is permitted. Built on `libcurl`, it supports HTTP, HTTPS, HTTP/2, and proxy servers (including authentication). It refines time estimation through multi-server consensus, outlier filtering, and round-trip-time weighting, and includes optional clock-frequency drift compensation for continuous daemon operation.
 
 ## Requirements

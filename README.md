@@ -157,4 +157,4 @@ If the username or password contains reserved URI characters such as `@`, `:`, `
 
 ## License
 
-`httpdate` is licensed under the GPL-2.0-or-later, the same license as its predecessor `htpdate`. See [LICENSE](twekkel/httpdate/blob/main/LICENSE) for details.
+`httpdate` is licensed under the GPL-2.0-or-later, the same license as its predecessor `htpdate`. See [LICENSE](LICENSE) for details.

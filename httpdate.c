@@ -20,7 +20,7 @@
 
 #define DEFAULT_MIN_SLEEP       10              /* 2^10  ~17 minutes */
 #define DEFAULT_MAX_SLEEP       16              /* 2^16  ~18 hours   */
-#define DEFAULT_PRECISION       3               /* 4  +/- 125 ms     */
+#define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
 #define PRINTBUFFERSIZE         1024
 #define MAXURLS                 16
 #define NS_SEC                  1000000000L

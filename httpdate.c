@@ -493,7 +493,7 @@ int main(int argc, char *argv[]) {
 
         if (fabs(avgtime) > threshold) {
           /* Avoid bouncing between upper/lower limit when (almost) in sync */
-          if (avgtime < 1 && avgtime > -1) avgtime /= 2;
+          if (fabs(avgtime) < 1.0 && setmode != 1) avgtime /= 2;
 
           if (setmode == 1) setclock(avgtime);
           if (setmode == 2 || setmode == 3) adjustclock(avgtime);

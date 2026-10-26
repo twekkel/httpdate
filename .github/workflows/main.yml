@@ -1,0 +1,13 @@
+name: main
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: build
+        run: make
+      - name: test
+        run: ./htpdate example.com example.net https://example.com

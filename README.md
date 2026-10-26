@@ -66,6 +66,7 @@ Create `/etc/systemd/system/httpdate.service`:
 [Unit]
 Description=HTTP Date Time Synchronization Daemon
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

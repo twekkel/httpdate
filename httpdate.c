@@ -80,22 +80,21 @@ static size_t getremotetime(void *contents, size_t size,
   char *remotetime   = userdata;
   size_t len         = size * nmemb;
 
-  if (len >= 6 + 5 + 24 && strncasecmp(buffer, "date: ", 6) == 0) {
-    memcpy(remotetime, buffer + 11, 24);
-    remotetime[24] = '\0';
+  if (len >= 6 + 5 + 20 && strncasecmp(buffer, "date: ", 6) == 0) {
+    memcpy(remotetime, buffer + 11, 20);
+    remotetime[20] = '\0';
   }
 
   return len;
 }
 
-static long offset_sec(char remotetime[25]) {
+static long offset_sec(char remotetime[21]) {
   struct timespec now;
   struct tm tm = {0};
 
   clock_gettime(CLOCK_REALTIME, &now);
 
-  if (strptime(remotetime, "%d %b %Y %H:%M:%S", &tm) == NULL &&
-      strptime(remotetime, "%a, %d %b %Y %H:%M:%S", &tm) == NULL) {
+  if (strptime(remotetime, "%d %b %Y %H:%M:%S", &tm) == NULL) {
     return LONG_MAX;
   }
 
@@ -112,12 +111,12 @@ static int setclock(double timedelta) {
   char   buffer[32] = {0};
 
   clock_gettime(CLOCK_REALTIME, &now);
-  timedelta += (now.tv_sec + now.tv_nsec * 1e-9);
+  timedelta += ((double)now.tv_sec + (double)now.tv_nsec * 1e-9);
 
   now.tv_sec  = (long)timedelta;
-  now.tv_nsec = (long)((timedelta - now.tv_sec) * 1e9);
+  now.tv_nsec = (long)((timedelta - (double)now.tv_sec) * 1e9);
 
-  strftime(buffer, sizeof(buffer), "%c GMT", gmtime(&now.tv_sec));
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", gmtime(&now.tv_sec));
   printlog(0, "Set time: %s", buffer);
 
   int ret = clock_settime(CLOCK_REALTIME, &now);
@@ -136,14 +135,13 @@ static int adjustclock(double timedelta) {
   printlog(0, "Adjusting %d ms", (int)round(timedelta * 1000.0));
 
   timeofday.tv_sec  = (long)timedelta;
-  timeofday.tv_usec = (long)((timedelta - timeofday.tv_sec) * 1e6L);
+  timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
 
   ret = adjtime(&timeofday, NULL);
   return(ret);
 }
 
-/* Mark the kernel clock as synchronized (clear STA_UNSYNC) */
-static int setstatus() {
+static int setstatus(void) {
   struct timex txc = {0};
 
   txc.modes = MOD_STATUS | MOD_ESTERROR | MOD_MAXERROR;
@@ -154,9 +152,6 @@ static int setstatus() {
   return(adjtimex(&txc));
 }
 
-/* Compensate systematic clock drift by adjusting the kernel clock frequency.
-   'drift' is in s/s, 'confidence' (0..1) is the weight given to the new value.
-*/
 static int adjustfreq(double drift, float confidence) {
   struct timex tmx = {0};
 
@@ -185,7 +180,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   CURLcode res;
   struct timespec now, sleepspec;
   char remotetime[25] = {0};
-  double result = LONG_MAX;
+  double result = INFINITY;
   double last_rtt = 0.0;
   double total_rtt = 0.0;
   double avg_rtt = 0.0;
@@ -199,7 +194,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
   curl = curl_easy_init();
   if (!curl) {
-    return LONG_MAX;
+    return INFINITY;
   }
 
   /* Pragma: no-cache, "forces" an HTTP/1.0 and 1.1 compliant
@@ -224,9 +219,10 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   }
 
-  /* Connect (DNS, TCP, TLS) before the poll loop, like htpdate does. The
-     CURLINFO_TOTAL_TIME of the polls below is then a plain request/response
-     time, without connection setup. The result of this request is discarded. */
+  /* Connect (DNS, TCP, TLS) before the poll loop. The CURLINFO_TOTAL_TIME
+     of the polls below is then a plain request/response time,
+     without connection setup. The result of this request is discarded.
+  */
   res = curl_easy_perform(curl);
   if (res != CURLE_OK) {
     printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
@@ -309,9 +305,9 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   if (when + nap == NS_SEC && offset == 0) {
     result = 0.0;
   } else if (first_offset < 0) {
-    result = -first_offset + (NS_SEC - when) / (double)NS_SEC;
+    result = -(double)first_offset + ((double)NS_SEC - (double)when) / (double)NS_SEC;
   } else {
-    result = -first_offset + 1 - when / (double)NS_SEC;
+    result = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
   }
 
   /* Average RTT is only used to weight the servers in main() */
@@ -321,14 +317,14 @@ cleanup:
   if (list) curl_slist_free_all(list);
   if (curl) curl_easy_cleanup(curl);
 
-  if (out_rtt && result != LONG_MAX) {
+  if (out_rtt && result != INFINITY) {
     *out_rtt = avg_rtt;
   }
 
   return result;
 }
 
-static void showhelp() {
+static void showhelp(void) {
   printf("httpdate version " VERSION "\n"
          "Usage: httpdate [-adDFhsvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -a    adjust time gradually\n"
@@ -435,7 +431,7 @@ int main(int argc, char *argv[]) {
       double rtt = 0.0;
 
       offset = bisect(argv[i], precision, &rtt);
-      if (offset != LONG_MAX) {
+      if (offset != INFINITY) {
         if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], (int)round(offset * 1000.0), (int)round(rtt * 1000.0));
         samples[valid_samples].offset = offset;
         samples[valid_samples].rtt = rtt;

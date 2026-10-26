@@ -1,63 +1,75 @@
-.TH "HTTPDATE" "8" "version 0.0.1" "httpdate"
+.TH "HTTPDATE" "8" "version 1.0.0" "httpdate"
 .SH "NAME"
-httpdate \- Time synchronization
+httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-adhsv] [\-p precision] [URL] ...
+[\-adhDFhsx] [\-p precision] [\-P proxy] [URLs] ...
 .SH "DESCRIPTION"
-Httpdate retrieves the date and time from remote machines via a network. Htpdate works through proxy servers. Accuracy of httpdate will be usually within 100 millsecond. If this is not good enough for you, try the ntpd package.
-
-Httpdate uses libcurl, therefore HTTP, HTTPS, HTTP/2, proxy server... is supported.
-.fi
+Httpdate retrieves the date and time from remote web servers via HTTP or HTTPS. Httpdate works through proxy servers and uses libcurl for secure and robust protocol support.
+.P
+Accuracy of httpdate depends on network latency and precision settings, typically achieving sub-second to millisecond accuracy. If this is not sufficient for your requirements, consider using the ntpd or chrony package.
 .SH OPTIONS
 .TP
 .I \-a
-Adjust time smoothly.
+Adjust time gradually (smoothly) using the system clock adjustment interface.
 .TP
 .I \-d
-Turn debug/verbose output on.
+Turn debug/verbose output on (can be specified multiple times for increased verbosity).
+.TP
+.I \-D
+Run as a daemon for continuous background time synchronization.
+.TP
+.I \-F
+Run the daemon in the foreground (e.g. for systemd).
 .TP
 .I \-h
-Show help.
+Show help information and exit.
 .TP
-.I \-p
-Precision specifies the number of bisect operations to find the 'second boundary'. Default is 6. With 10 the accuracy is in the millisecond range. Use with caution.
+.I \-p precision
+Precision specifies the number of bisect operations (1 to 9, default: 3) to find the 'second boundary'. Higher precision increases accuracy.
+.TP
+.I \-P proxy
+Use a proxy server for connections (e.g., http://proxy:port or host:port).
 .TP
 .I \-s
-Set time immediate.
+Set time immediately.
 .TP
 .I \-v
-Show version.
+Show version information and exit.
+.TP
+.I \-x
+Adjust time and clock frequency (drift correction), designed for continuous operation in daemon mode (`-D`).
 .TP
 .I URL
-Path to resource, e.g. https://www.example.com/httpdate.html
+Path to resource or web server endpoint, e.g., https://pool.ntp.org or https://time.google.com
 .SH "ENVIRONMENT"
-Httpdate supports proxies for HTTP(S) connections. The standard way to specify the proxy location, which httpdate recognizes, is using the following environment variable:
+Httpdate supports standard proxy environment variables for HTTP(S) connections:
 .IP "\fBhttp_proxy\fR" 4
 .IX Item "http_proxy"
 .PD
 If set, the http_proxy variable should contain the URL of the proxy for HTTP connections.
 .SH "EXAMPLES"
-Request time from web server (don't update local clock):
+Request time from multiple web servers without modifying the local clock:
 .br
-\&    httpdate http://www.example.com
+\&    httpdate example.com http://example.com https://example.com
+.P
+Run as daemon mode in the foreground with drift correction (e.g. for systemd):
+.br
+\&    httpdate \-F \-x https://example.com
 .P
 Debug/verbose output:
 .br
-\&    httpdate \-d www.example.com
+\&    httpdate \-d \-d example.com
 .P
-Set time/clock:
+Set time immediately:
 .br
-\&    httpdate \-s http://www.example.com
-.P
-.br
-Adjust time smoothly (e.g. running from cron):
-.br
-\&    httpdate \-a www.example.com:80/httpdate.html https://example.com
+\&    httpdate \-s example.com
 .P
 .SH "AUTHOR"
-Eddy Vervest <eddy@vervest.org>, https://www.vervest.org/htp
+Eddy Vervest
 .SH "SEE ALSO"
+.BR htpdate,
 .BR rdate,
 .BR timed,
-.BR ntpd
+.BR ntpd,
+.BR systemd

@@ -1,20 +1,35 @@
-prefix = $(DESTDIR)/usr
-bindir = ${prefix}/bin
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
 
 CC     ?= gcc
-CFLAGS += -Wall -std=c11 -pedantic -O2
+CFLAGS ?= -Wall -std=c11 -pedantic -O2 -flto
+LIBS   := -lcurl -lm
 
-INSTALL = install -c
+INSTALL = install
 STRIP   = strip -s
+
+SRC = httpdate.c
+OBJ = httpdate.o
 
 all: httpdate
 
-httpdate: httpdate.c utils.c
-	$(CC) $(CFLAGS) -c httpdate.c utils.c
-	$(CC) $(CFLAGS) -o httpdate utils.o httpdate.o -lcurl
+httpdate: $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-test:
+httpdate.o: httpdate.c
+
+test: httpdate
 	./httpdate https://www.example.com
 
+install: httpdate
+	$(INSTALL) -d $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m 755 httpdate $(DESTDIR)$(BINDIR)/httpdate
+	$(STRIP) $(DESTDIR)$(BINDIR)/httpdate
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/httpdate
+
 clean:
-	rm -rf httpdate httpdate.o utils.o
+	rm -f httpdate $(OBJ)
+
+.PHONY: all test install uninstall clean

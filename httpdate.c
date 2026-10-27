@@ -171,10 +171,14 @@ static int adjustfreq(double drift, float confidence) {
   return(adjtimex(&tmx));
 }
 
-/* Same bisection as htpdate's getHTTPdate(): the requests are sent
-   'latency' (= rtt / 2) ahead of time, so they hit the web server at the
-   sub-second position "when". No RTT correction is needed afterwards.
-*/
+static long getrtt(CURL *curl, double *rtt_s) {
+  curl_off_t t_pre = 0, t_start = 0;
+  curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
+  curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &t_start);
+  *rtt_s = (double)(t_start - t_pre) / 1e6;
+  return (long)(t_start - t_pre) * 1000L;
+}
+
 static double bisect(const char *url, int precision, double *out_rtt) {
   CURL *curl = NULL;
   struct curl_slist *list = NULL;
@@ -187,7 +191,6 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   double avg_rtt = 0.0;
   long offset = 0, first_offset = 0, prev_offset = 0;
   long nap = NS_SEC;
-  long latency = 0;
   long rtt = 0;
   long when = nap >> precision;
   long target;
@@ -224,15 +227,13 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   }
 
-  /* Connect (DNS, TCP, TLS) before the poll loop. The CURLINFO_TOTAL_TIME
-     of the polls below is then a plain request/response time,
-     without connection setup. The result of this request is discarded.
-  */
+  // Eliminate connection setup time (DNS, TCP, TLS) before the poll loop.
   res = curl_easy_perform(curl);
   if (res != CURLE_OK) {
     printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
     goto cleanup;
   }
+  rtt = getrtt(curl, &last_rtt);
 
   do {
     if (verbose > 1)
@@ -242,7 +243,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     clock_gettime(CLOCK_REALTIME, &now);
 
     /* Wait till we reach the desired time, "when" - latency */
-    target = when - latency;
+    target = when - rtt / 2;
     if (target < 0) target += NS_SEC;
 
     sleepspec.tv_sec = 0;
@@ -262,16 +263,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     }
 
     /* rtt contains round trip time in nanoseconds */
-    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &last_rtt);
-    rtt = (long)(last_rtt * 1e9);
-    if (rtt < 2) rtt = 2;               /* latency must never stay 0 */
-
-    /* Obtain rtt/latency first */
-    if (latency == 0) {
-      latency = rtt / 2;
-      continue;
-    }
-    latency = rtt / 2;
+    rtt = getrtt(curl, &last_rtt);
 
     if (remotetime[0] == '\0') {
       printlog(1, "%s no timestamp", url);
@@ -432,7 +424,7 @@ int main(int argc, char *argv[]) {
   }
 
   do {
-    struct timesample samples[MAXURLS];
+    struct timesample samples[MAXURLS] = {0};
     int valid_samples = 0;
     double avgtime = 0;
 

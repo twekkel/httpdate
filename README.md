@@ -2,7 +2,16 @@
 
 [![main](https://github.com/twekkel/httpdate/actions/workflows/main.yml/badge.svg)](https://github.com/twekkel/httpdate/actions/workflows/main.yml)
 
-`httpdate` is the modern successor to [`htpdate`](https://github.com/twekkel/htpdate). Like its predecessor, it synchronizes time using HTTP date headers, making it useful on networks where NTP is blocked but web access through HTTP or HTTPS proxies is permitted. Built on `libcurl`, it supports HTTP, HTTPS, HTTP/2, and proxy servers (including authentication). It refines time estimation through multi-server consensus, outlier filtering, and round-trip-time weighting, and includes optional clock-frequency drift compensation for continuous daemon operation.
+
+### Time synchronization... quick and dirty
+
+```
+date -s "`curl --head -s https://example.com | grep -i "Date: " | cut -d' ' -f2-`"
+```
+
+### Better solution... httpdate
+
+`httpdate` is the modern successor to [`htpdate`](https://github.com/twekkel/htpdate). Like its predecessor, it synchronizes time using HTTP date headers, making it useful on networks where NTP is blocked but web access through HTTP or HTTPS proxies is permitted. Built with `libcurl`, it supports HTTP, HTTPS, HTTP/2, and proxy servers (including authentication). It refines time estimation through multi-server consensus, outlier filtering, and round-trip-time weighting, and includes optional clock-frequency drift compensation for continuous daemon operation.
 
 ## Requirements
 
@@ -106,6 +115,15 @@ To restart or stop the service:
 ```sh
 sudo systemctl restart httpdate.service
 sudo systemctl stop httpdate.service
+```
+
+## Running from cron
+
+If you prefer cron over a systemd service, you can run httpdate periodically. Setting or adjusting the clock requires root, so use root's crontab.
+
+For example, a daily time synchronization,
+```
+7 3 * * * /usr/local/bin/httpdate -a www.example.com >/dev/null
 ```
 
 ## Command-line options

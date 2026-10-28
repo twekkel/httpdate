@@ -7,33 +7,33 @@ httpdate \- Time synchronization via HTTP/HTTPS
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
-HTTP timestamps have a resolution of one second. To find the sub-second offset, httpdate queries each server several times at different positions within the second (see \fB\-p\fR) and locates the second boundary by bisection. With several servers, the median offset is used to discard servers that disagree with it by more than 0.5 seconds. The remaining offsets are averaged, weighted by the inverse of their round trip time. With exactly two servers that disagree by more than 0.5 seconds, the one with the shorter round trip time is used.
+HTTP timestamps have a resolution of one second. To find the sub-second offset, httpdate queries each server several times at different positions within the second (see \fB\-p\fR) and locates the second boundary by bisection. With several servers, the median offset is used to discard 'false tickers'. The remaining offsets are averaged, weighted by the inverse of their round-trip-time.
 .P
 By default httpdate only displays the offset and does not change the clock. Use \fB\-a\fR, \fB\-s\fR, \fB\-x\fR or \fB\-D\fR to change it. Changing the clock requires root privileges.
 .P
-Accuracy depends on network latency and on the precision setting (resolution of about 1/2^precision seconds, 125 ms by default), and is better with several servers. If this is not sufficient, use ntpd or chrony.
+Accuracy depends on network latency and on the precision setting (~125 ms by default), and is more stable with multiple servers. If this is not sufficient, use ntpd or chrony.
 .SH "OPTIONS"
 .TP
 .B \-a
-Adjust the clock gradually (slew) with adjtime(3) instead of stepping it. Offsets smaller than one second are applied at half strength, so that measurement noise does not make the clock oscillate. Repeat the run, or use daemon mode, to converge.
+Adjust the clock gradually (slew) with adjtime(3) instead of stepping it. Repeat the run, or use daemon mode, to converge.
 .TP
 .B \-d
-Turn debug/verbose output on. Can be given up to three times: one level shows the offset and round trip time per server, two levels also show every bisection step, and three levels turn on libcurl's verbose output.
+Turn debug/verbose output on. Can be given up to three times to increase the details.
 .TP
 .B \-D
-Run as a daemon: fork into the background, log to syslog and poll continuously. Implies \fB\-a\fR unless \fB\-x\fR is given. After a correction the next poll follows in about 17 minutes; while the clock stays in sync the interval is doubled at each poll, up to about 18 hours.
+Run as a daemon: fork into the background, log to syslog and poll continuously. Implies \fB\-a\fR unless \fB\-x\fR is given.
 .TP
 .B \-F
 Run the daemon in the foreground, without forking, and log to the terminal (for example under systemd).
 .TP
 .B \-h
-Show help information and exit.
+Show help information.
 .TP
 .B \-n
-Ignore proxy environment variables. An explicit \fB\-P\fR still applies.
+Ignore proxy environment variables.
 .TP
 .BI \-p " precision"
-Number of bisection steps per server, from 1 to 9 (default 3). Each step halves the uncertainty of the second boundary, so the resolution is about 1/2^\fIprecision\fR seconds. A higher precision increases accuracy and the time needed per server. Offsets smaller than this resolution are ignored.
+Number of steps per server, from 1 to 9 (default 3). Each step halves the uncertainty of the second boundary, so the resolution is about 1/2^\fIprecision\fR seconds. A higher precision increases accuracy and the time needed per server. Offsets smaller than this resolution are ignored.
 .TP
 .BI \-P " proxy"
 Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Overrides the proxy environment variables.
@@ -42,7 +42,7 @@ Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Ove
 Set (step) the clock immediately. Offsets are applied in full, also when smaller than one second. Not recommended together with \fB\-D\fR.
 .TP
 .B \-v
-Show version information and exit.
+Show version information.
 .TP
 .B \-x
 Adjust the clock and compensate for the systematic clock drift by adjusting the clock frequency. The frequency is only corrected in daemon mode (\fB\-D\fR or \fB\-F\fR). When the offset is smaller than 0.5 seconds the kernel clock is marked as synchronized.

@@ -341,6 +341,50 @@ cleanup:
   return result;
 }
 
+static double calculate_offset(struct timesample samples[], int valid_samples) {
+  double avgtime = INFINITY;
+  double total_weight = 0;
+
+  if (valid_samples == 2 && fabs(samples[0].offset - samples[1].offset) > 0.5) {
+    avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
+    total_weight = 1;
+  } else {
+    double sorted_offsets[MAXURLS];
+    for (int j = 0; j < valid_samples; j++)
+       sorted_offsets[j] = samples[j].offset;
+
+    insertsort(sorted_offsets, valid_samples);
+
+    double median_offset = sorted_offsets[valid_samples / 2];
+
+    double weighted_sum = 0;
+
+    /* Filter out the bogus timevalues. An offset which is more than
+       1 second off from mean, is considered a 'false ticker'.
+       NTP synced web servers can never be more off than a second.
+    */
+    for (int j = 0; j < valid_samples; j++) {
+      if (fabs(samples[j].offset - median_offset) > 0.5) {
+        if (verbose)
+          printlog(0, "Dropping outlier: offset %d ms from median",
+          (int)round(samples[j].offset * 1000.0));
+        continue;
+      }
+
+      // Inverse RTT weighted values
+      double weight = 1.0 / (samples[j].rtt + 0.001);
+      weighted_sum += samples[j].offset * weight;
+      total_weight += weight;
+    }
+
+    if (total_weight > 0) {
+      avgtime = weighted_sum / total_weight;
+    }
+  }
+
+  return (total_weight > 0) ? avgtime : INFINITY;
+}
+
 static void showhelp(void) {
   printf("httpdate version " VERSION "\n"
          "Usage: httpdate [-adDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
@@ -468,46 +512,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (valid_samples > 0) {
-      double total_weight = 0;
+      avgtime = calculate_offset(samples, valid_samples);
 
-      if (valid_samples == 2 && fabs(samples[0].offset - samples[1].offset) > 0.5) {
-        avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
-        total_weight = 1;
-      } else {
-        double sorted_offsets[MAXURLS];
-        for (int j = 0; j < valid_samples; j++)
-           sorted_offsets[j] = samples[j].offset;
-
-        insertsort(sorted_offsets, valid_samples);
-
-        double median_offset = sorted_offsets[valid_samples / 2];
-
-        double weighted_sum = 0;
-
-        /* Filter out the bogus timevalues. An offset which is more than
-           1 second off from mean, is considered a 'false ticker'.
-           NTP synced web servers can never be more off than a second.
-        */
-        for (int j = 0; j < valid_samples; j++) {
-          if (fabs(samples[j].offset - median_offset) > 0.5) {
-            if (verbose)
-              printlog(0, "Dropping outlier: offset %d ms from median",
-              (int)round(samples[j].offset * 1000.0));
-            continue;
-          }
-
-          // Inverse RTT weighted values
-          double weight = 1.0 / (samples[j].rtt + 0.001);
-          weighted_sum += samples[j].offset * weight;
-          total_weight += weight;
-        }
-
-        if (total_weight > 0) {
-          avgtime = weighted_sum / total_weight;
-        }
-      }
-
-      if (total_weight > 0) {
+      if (avgtime != INFINITY) {
         // Consensus offset, median-filtered and RTT-weighted
         if (verbose || run_mode == RUN_ONESHOT)
           printlog(0, "Offset: %d ms", (int)round(avgtime * 1000.0));

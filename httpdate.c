@@ -66,9 +66,6 @@ static void printlog(int is_error, char *format, ...) {
     case 1:
       syslog(is_error ? LOG_WARNING : LOG_INFO, "%s", buf);
       break;
-    case 2:
-      fprintf(stderr, "%s\n", buf);
-      break;
     default:
       fprintf(stderr, "%s\n", "Invalid logmode, aborting");
       abort();

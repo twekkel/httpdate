@@ -443,7 +443,7 @@ int main(int argc, char *argv[]) {
       case 'v':
         printf("httpdate version %s\n", VERSION);
         exit(0);
-      case 'x':               /* adjust time and clock frequency */
+      case 'x':
         sync_mode = SYNC_MODE_DRIFT;
         if (precision < 7) precision = 7;
         break;
@@ -540,7 +540,16 @@ int main(int argc, char *argv[]) {
             }
             starttime = time(NULL);
           }
-          interval = DEFAULT_MIN_SLEEP;
+
+          /* Only force DEFAULT_MIN_SLEEP for large corrections,
+             otherwise easing back off
+          */
+          if (fabs(avgtime) > (threshold * 2.0)) {
+            interval = DEFAULT_MIN_SLEEP;
+          } else if (interval > DEFAULT_MIN_SLEEP) {
+            interval--;
+          }
+        } else {
         } else {
           if (interval < DEFAULT_MAX_SLEEP) {
              interval++;

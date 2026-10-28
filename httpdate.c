@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <curl/curl.h>
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -21,10 +22,12 @@
 #define DEFAULT_MIN_SLEEP       10              /* 2^10  ~17 minutes */
 #define DEFAULT_MAX_SLEEP       16              /* 2^16  ~18 hours   */
 #define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
+#define DRIFT_TAU               43200.0         /* 12-hour smoothing */
 #define PRINTBUFFERSIZE         1024
-#define MAXURLS                 16
+#define MAX_PPM                 2
+#define MAX_URLS                16
 #define NS_SEC                  1000000000L
-#define MAX_DRIFT               32768000        /* 500 PPM */
+#define MAX_DRIFT               32768000L       /* 500 PPM */
 #define VERSION                 "1.0.0"
 
 enum log_dest {
@@ -170,22 +173,40 @@ static int setstatus(void) {
   return(adjtimex(&txc));
 }
 
-static int adjustfreq(double drift, float confidence) {
+static int adjust_freq(double drift, float confidence) {
   struct timex tmx = {0};
+  long old_freq;
 
   /* Read current clock frequency */
   tmx.modes = 0;
   adjtimex(&tmx);
+  old_freq = tmx.freq;
 
-  /* Weighted average of current and new frequency */
-  tmx.freq = tmx.freq + (long int)(65536e6 * drift * confidence);
+  /* Weighted target delta based on measured drift and confidence */
+  long freq_delta = (long)(65536e6 * drift * confidence);
+
+  /* Slew-rate limit: MAX_PPM change per call */
+  long max_delta = MAX_PPM * 65536L;
+  if (freq_delta > max_delta) {
+    freq_delta = max_delta;
+  } else if (freq_delta < -max_delta) {
+    freq_delta = -max_delta;
+  }
+
+  tmx.freq = old_freq + freq_delta;
+
+  /* Enforce absolute safety bounds */
   if ((tmx.freq < -MAX_DRIFT) || (tmx.freq > MAX_DRIFT))
     tmx.freq = (tmx.freq < 0 ? -1 : 1) * MAX_DRIFT;
-
-  printlog(0, "Set frequency %li", tmx.freq);
   tmx.modes = MOD_FREQUENCY;
 
-  return(adjtimex(&tmx));
+  if (adjtimex(&tmx) < 0) {
+    printlog(1, "Frequency change failed: %s", strerror(errno));
+    return -1;
+  }
+
+  printlog(0, "Set frequency %li (delta %li)", tmx.freq, freq_delta);
+  return 0;
 }
 
 static long getrtt(CURL *curl, double *rtt_s) {
@@ -343,7 +364,7 @@ static double calculate_offset(struct timesample samples[], int valid_samples) {
     avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
     total_weight = 1;
   } else {
-    double sorted_offsets[MAXURLS];
+    double sorted_offsets[MAX_URLS];
     for (int j = 0; j < valid_samples; j++)
        sorted_offsets[j] = samples[j].offset;
 
@@ -458,7 +479,7 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  if (argc - optind > MAXURLS) {
+  if (argc - optind > MAX_URLS) {
     printlog(1, "Too many URLs specified");
     exit(1);
   }
@@ -488,7 +509,7 @@ int main(int argc, char *argv[]) {
   }
 
   do {
-    struct timesample samples[MAXURLS] = {0};
+    struct timesample samples[MAX_URLS] = {0};
     int valid_samples = 0;
     double avgtime = 0;
 
@@ -535,7 +556,7 @@ int main(int argc, char *argv[]) {
               printlog(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
 
               /* Adjust the clock frequency, weighted by elapsed time */
-              if (adjustfreq(drift, (float)(elapsed / (elapsed + 3600.0))) < 0)
+              if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
                 printlog(1, "Frequency change failed");
             }
             starttime = time(NULL);

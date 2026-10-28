@@ -550,7 +550,6 @@ int main(int argc, char *argv[]) {
             interval--;
           }
         } else {
-        } else {
           if (interval < DEFAULT_MAX_SLEEP) {
              interval++;
           }

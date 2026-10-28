@@ -27,9 +27,29 @@
 #define MAX_DRIFT               32768000        /* 500 PPM */
 #define VERSION                 "1.0.0"
 
-static int logmode     = 0;
-static int noproxy     = 0;
-static char *proxy_url = NULL;
+enum log_dest {
+  LOG_DEST_CONSOLE,
+  LOG_DEST_SYSLOG
+};
+
+enum run_mode {
+  RUN_ONESHOT,
+  RUN_BACKGROUND,
+  RUN_FOREGROUND
+};
+
+enum sync_mode {
+  SYNC_MODE_NONE,
+  SYNC_MODE_SET,
+  SYNC_MODE_ADJUST,
+  SYNC_MODE_DRIFT
+};
+
+static enum log_dest log_dest = LOG_DEST_CONSOLE;
+static enum run_mode run_mode = RUN_ONESHOT;
+static enum sync_mode sync_mode = SYNC_MODE_NONE;
+
+static const char *proxy = NULL;
 static int verbose     = 0;
 
 struct timesample {
@@ -58,12 +78,12 @@ static void printlog(int is_error, char *format, ...) {
   (void) vsnprintf(buf, sizeof(buf), format, args);
   va_end(args);
 
-  switch(logmode) {
-    case 0:
+  switch(log_dest) {
+    case LOG_DEST_CONSOLE:
       fprintf(is_error ? stderr : stdout, "%s\n", buf);
       fflush(is_error ? stderr : stdout);
       break;
-    case 1:
+    case LOG_DEST_SYSLOG:
       syslog(is_error ? LOG_WARNING : LOG_INFO, "%s", buf);
       break;
     default:
@@ -208,10 +228,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
-  if (proxy_url)
-    curl_easy_setopt(curl, CURLOPT_PROXY, proxy_url);
-  else if (noproxy)
-    curl_easy_setopt(curl, CURLOPT_PROXY, "");
+  if (proxy)
+    curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
   curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
   curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -336,9 +354,6 @@ static void showhelp(void) {
 }
 
 int main(int argc, char *argv[]) {
-  int       setmode    = 0;
-  int       daemonize  = 0;
-  int       foreground = 0;
   int       interval   = DEFAULT_MIN_SLEEP;
   int       precision  = DEFAULT_PRECISION;
   double    drift      = 0;
@@ -348,27 +363,26 @@ int main(int argc, char *argv[]) {
   while ((param = getopt(argc, argv, "adhDFnp:P:svx")) != -1)
     switch(param) {
       case 'a':
-        setmode = 2;
+        sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'd':
         if (verbose < 3) verbose++;
         break;
       case 'D':
-        daemonize = 1;
-        logmode = 1;
-        if (setmode != 3) setmode = 2;
+        run_mode = RUN_BACKGROUND;
+        log_dest = LOG_DEST_SYSLOG;
+        if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'F':
-        daemonize = 1;
-        foreground = 1;
-        logmode = 0;
-        if (setmode != 3) setmode = 2;
+        run_mode = RUN_FOREGROUND;
+        log_dest = LOG_DEST_CONSOLE;
+        if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'h':
         showhelp();
         exit(0);
       case 'n':
-        noproxy = 1;
+        if (!proxy) proxy = "";
         break;
       case 'p':
         precision = atoi(optarg);
@@ -378,16 +392,16 @@ int main(int argc, char *argv[]) {
         }
         break;
       case 'P':
-        proxy_url = optarg;
+        proxy = optarg;
         break;
       case 's':
-        setmode = 1;
+        sync_mode = SYNC_MODE_SET;
         break;
       case 'v':
         printf("httpdate version %s\n", VERSION);
         exit(0);
       case 'x':               /* adjust time and clock frequency */
-        setmode = 3;
+        sync_mode = SYNC_MODE_DRIFT;
         if (precision < 7) precision = 7;
         break;
       case '?':
@@ -408,16 +422,26 @@ int main(int argc, char *argv[]) {
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
-  if (daemonize) {
-    if (!foreground) {
-      openlog("httpdate", LOG_PID | LOG_CONS, LOG_DAEMON);
-      if (daemon(0, 0) < 0) {
-        perror("daemon initialization failed");
-        curl_global_cleanup();
-        exit(1);
-      }
+  switch (run_mode) {
+  case RUN_ONESHOT:
+    /* Run once without daemonizing or startup logging. */
+    break;
+
+  case RUN_BACKGROUND:
+    openlog("httpdate", LOG_PID | LOG_CONS, LOG_DAEMON);
+
+    if (daemon(0, 0) < 0) {
+      perror("daemon initialization failed");
+      curl_global_cleanup();
+      exit(1);
     }
+
     printlog(0, "httpdate version "VERSION" started");
+    break;
+
+  case RUN_FOREGROUND:
+    printlog(0, "httpdate version "VERSION" started");
+    break;
   }
 
   do {
@@ -480,11 +504,11 @@ int main(int argc, char *argv[]) {
 
       if (total_weight > 0) {
         // Consensus offset, median-filtered and RTT-weighted
-        if (verbose || !daemonize)
+        if (verbose || run_mode == RUN_ONESHOT)
           printlog(0, "Offset: %d ms", (int)round(avgtime * 1000.0));
 
         /* Consider +/- .5s a valid sync state */
-        if (setmode == 3 && fabs(avgtime) < 0.5)
+        if (sync_mode == SYNC_MODE_DRIFT && fabs(avgtime) < 0.5)
           setstatus();
 
         /* Measurement resolution is +/- 1/2^precision seconds */
@@ -492,12 +516,12 @@ int main(int argc, char *argv[]) {
 
         if (fabs(avgtime) > threshold) {
           /* Avoid bouncing between upper/lower limit when (almost) in sync */
-          if (fabs(avgtime) < 1.0 && setmode != 1) avgtime /= 2;
+          if (fabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
 
-          if (setmode == 1) setclock(avgtime);
-          if (setmode == 2 || setmode == 3) adjustclock(avgtime);
+          if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
+          if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
 
-          if (daemonize && setmode == 3) {
+          if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
             if (starttime) {
               /* Calculate systematic clock drift */
               double elapsed = (double)(time(NULL) - starttime);
@@ -518,24 +542,24 @@ int main(int argc, char *argv[]) {
         }
       } else {
         printlog(1, "No servers passed RTT quality and consensus filters");
-        if (!daemonize) {
+        if (run_mode == RUN_ONESHOT) {
           curl_global_cleanup();
           exit(1);
         }
       }
     } else {
       printlog(1, "No suitable servers available");
-      if (!daemonize) {
+      if (run_mode == RUN_ONESHOT) {
         curl_global_cleanup();
         exit(1);
       }
     }
 
-    if (daemonize) {
+    if (run_mode != RUN_ONESHOT) {
       sleep(1<<interval);
     }
 
-  } while (daemonize);
+  } while (run_mode != RUN_ONESHOT);
 
   curl_global_cleanup();
   return 0;

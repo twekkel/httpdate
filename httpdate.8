@@ -14,6 +14,12 @@ By default httpdate only displays the offset and does not change the clock. Use 
 Accuracy depends on network latency and on the precision setting (~125 ms by default), and is more stable with multiple servers. If this is not sufficient, use ntpd or chrony.
 .SH "OPTIONS"
 .TP
+.I \-4
+Force IPv4 name resolution only. Default behaviour is to try IPv6 first and fall back to IPv4.
+.TP
+.I \-6
+Force IPv6 name resolution only.
+.TP
 .B \-a
 Adjust the clock gradually (slew) with adjtime(3) instead of stepping it. Repeat the run, or use daemon mode, to converge.
 .TP

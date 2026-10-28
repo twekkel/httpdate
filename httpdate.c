@@ -53,7 +53,8 @@ static enum run_mode run_mode = RUN_ONESHOT;
 static enum sync_mode sync_mode = SYNC_MODE_NONE;
 
 static const char *proxy = NULL;
-static int verbose     = 0;
+static int verbose       = 0;
+static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
 
 struct timesample {
   double offset;
@@ -223,17 +224,18 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
   *list = curl_slist_append(*list, "Cache-Control: no-cache");
   *list = curl_slist_append(*list, "Connection: keep-alive");
 
-  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-  curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
   if (proxy)
     curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
-  curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *list);
-  curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)remotetime);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
+  curl_easy_setopt(curl, CURLOPT_IPRESOLVE, ip_resolve);
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
 
   if (verbose > 2) {
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
@@ -400,9 +402,11 @@ static double calculate_offset(struct timesample samples[], int valid_samples) {
   return (total_weight > 0) ? avgtime : INFINITY;
 }
 
-static void showhelp(void) {
+static void show_help(void) {
   printf("httpdate version " VERSION "\n"
          "Usage: httpdate [-adDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "  -4    force IPv4 resolution\n"
+         "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
          "  -d    debug/verbose output\n"
          "  -D    run as daemon\n"
@@ -424,8 +428,14 @@ int main(int argc, char *argv[]) {
   time_t    starttime  = 0;
 
   int       param;
-  while ((param = getopt(argc, argv, "adhDFnp:P:svx")) != -1)
+  while ((param = getopt(argc, argv, "46adhDFnp:P:svx")) != -1)
     switch(param) {
+      case '4':
+        ip_resolve = CURL_IPRESOLVE_V4;
+        break;
+      case '6':
+        ip_resolve = CURL_IPRESOLVE_V6;
+        break;
       case 'a':
         sync_mode = SYNC_MODE_ADJUST;
         break;
@@ -443,7 +453,7 @@ int main(int argc, char *argv[]) {
         if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'h':
-        showhelp();
+        show_help();
         exit(0);
       case 'n':
         if (!proxy) proxy = "";
@@ -470,12 +480,12 @@ int main(int argc, char *argv[]) {
         break;
       case '?':
       default:
-        showhelp();
+        show_help();
         exit(1);
     }
 
   if (argv[optind] == NULL) {
-    showhelp();
+    show_help();
     exit(1);
   }
 

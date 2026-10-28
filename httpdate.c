@@ -510,11 +510,7 @@ int main(int argc, char *argv[]) {
             }
             starttime = time(NULL);
           }
-
           interval = DEFAULT_MIN_SLEEP;
-
-          /* Let adjtime() finish before the next poll cycle */
-          if (daemonize && setmode == 3) sleep((unsigned int)fabs(avgtime * 2000));
         } else {
           if (interval < DEFAULT_MAX_SLEEP) {
              interval++;

@@ -319,13 +319,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   if (verbose > 1) printlog(0, "when: %ld, nap: %ld", when, nap);
 
   /* Rounding */
-  if (when + nap == NS_SEC && offset == 0) {
-    result = 0.0;
-  } else if (first_offset < 0) {
-    result = -(double)first_offset + ((double)NS_SEC - (double)when) / (double)NS_SEC;
-  } else {
-    result = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
-  }
+  result = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
 
   /* Average RTT is only used to weight the servers in main() */
   avg_rtt = total_rtt / polls;

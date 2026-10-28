@@ -196,6 +196,31 @@ static long getrtt(CURL *curl, double *rtt_s) {
   return (long)(t_start - t_pre) * 1000L;
 }
 
+static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
+  // "Force" clean timestamp
+  *list = curl_slist_append(*list, "Pragma: no-cache");
+  *list = curl_slist_append(*list, "Cache-Control: no-cache");
+  *list = curl_slist_append(*list, "Connection: keep-alive");
+
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
+  if (proxy)
+    curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
+  curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *list);
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)remotetime);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+
+  if (verbose > 2) {
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+  }
+
+  return CURLE_OK;
+}
+
 static double bisect(const char *url, int precision, double *out_rtt) {
   CURL *curl = NULL;
   struct curl_slist *list = NULL;
@@ -218,28 +243,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     return INFINITY;
   }
 
-  /* Pragma: no-cache, "forces" an HTTP/1.0 and 1.1 compliant
-     web server to return a fresh timestamp
-     Connection: keep-alive, for multiple requests
-  */
-  list = curl_slist_append(list, "Pragma: no-cache");
-  list = curl_slist_append(list, "Cache-Control: no-cache");
-  list = curl_slist_append(list, "Connection: keep-alive");
-
-  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-  curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
-  if (proxy)
-    curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
-  curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-  curl_easy_setopt(curl, CURLOPT_URL, url);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)remotetime);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
-
-  if (verbose > 2) {
-    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+  if (setup_curl_handle(curl, &list, url, remotetime) != CURLE_OK) {
+    goto cleanup;
   }
 
   // Eliminate connection setup time (DNS, TCP, TLS) before the poll loop.

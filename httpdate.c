@@ -206,7 +206,7 @@ static int adjust_freq(double drift, float confidence) {
     return -1;
   }
 
-  printlog(0, "Set frequency %li (delta %li)", tmx.freq, freq_delta);
+  printlog(0, "Set frequency %li", tmx.freq);
   return 0;
 }
 

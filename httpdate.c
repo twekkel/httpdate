@@ -110,11 +110,8 @@ static size_t getremotetime(void *contents, size_t size,
   return len;
 }
 
-static long offset_sec(char remotetime[21]) {
-  struct timespec now;
+static long offset_sec(char remotetime[21], time_t local_sec) {
   struct tm tm = {0};
-
-  clock_gettime(CLOCK_REALTIME, &now);
 
   if (strptime(remotetime, "%d %b %Y %H:%M:%S", &tm) == NULL) {
     return LONG_MAX;
@@ -125,7 +122,7 @@ static long offset_sec(char remotetime[21]) {
     return LONG_MAX;
   }
 
-  return now.tv_sec - (long)remote_epoch;
+  return local_sec - (long)remote_epoch;
 }
 
 static int setclock(double timedelta) {
@@ -248,7 +245,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   CURL *curl = NULL;
   struct curl_slist *list = NULL;
   CURLcode res;
-  struct timespec now, sleepspec;
+  struct timespec wake;
   char remotetime[25] = {0};
   double result = INFINITY;
   double last_rtt = 0.0;
@@ -282,20 +279,20 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     if (verbose > 1)
       printlog(0, "bisect: %i, when: %09li", polls, when);
 
-    /* Initialize timer */
-    clock_gettime(CLOCK_REALTIME, &now);
-
     /* Wait till we reach the desired time, "when" - latency */
-    target = when - rtt / 2;
+    target = (when - rtt / 2) % NS_SEC;
     if (target < 0) target += NS_SEC;
 
-    sleepspec.tv_sec = 0;
-    if (target >= now.tv_nsec) {
-      sleepspec.tv_nsec = target - now.tv_nsec;
-    } else {
-      sleepspec.tv_nsec = NS_SEC + target - now.tv_nsec;
-    }
-    nanosleep(&sleepspec, NULL);
+    /* Absolute wake time: next moment the wall clock reads "target" ns */
+    clock_gettime(CLOCK_REALTIME, &wake);
+    if (wake.tv_nsec > target) wake.tv_sec++;
+    wake.tv_nsec = target;
+
+    /* Local second in which the request reaches the server */
+    time_t local_sec = wake.tv_sec + ((long long)wake.tv_nsec + rtt / 2) / NS_SEC;
+
+    while (clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &wake, NULL) == EINTR)
+      ;
 
     /* Send HEAD request */
     remotetime[0] = '\0';
@@ -313,7 +310,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
       goto cleanup;
     }
 
-    offset = offset_sec(remotetime);
+    offset = offset_sec(remotetime, local_sec);
     if (offset == LONG_MAX) {
       printlog(1, "%s unknown time format", url);
       goto cleanup;

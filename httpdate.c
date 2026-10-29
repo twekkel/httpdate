@@ -223,14 +223,13 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
 
   if (proxy)
     curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *list);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)remotetime);
   curl_easy_setopt(curl, CURLOPT_IPRESOLVE, ip_resolve);
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
   curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
 

@@ -421,10 +421,60 @@ static void show_help(void) {
          DEFAULT_PRECISION);
 }
 
+static void update_clock(double avgtime, int precision, int *interval,
+  time_t *starttime) {
+
+  // Consensus offset, median-filtered and RTT-weighted
+  if (verbose || run_mode == RUN_ONESHOT)
+    printlog(0, "Offset: %d ms", (int)round(avgtime * 1000.0));
+
+  /* Consider +/- .5s a valid sync state */
+  if (sync_mode == SYNC_MODE_DRIFT && fabs(avgtime) < 0.5)
+    setstatus();
+
+  /* Measurement resolution is +/- 1/2^precision seconds */
+  double threshold = 1.0 / (double)(1 << precision);
+
+  if (fabs(avgtime) <= threshold) {
+    if (*interval < DEFAULT_MAX_SLEEP) {
+      (*interval)++;
+    }
+    return;
+  }
+
+  /* Avoid bouncing between upper/lower limit when (almost) in sync */
+  if (fabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
+
+  if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
+  if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
+
+  if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
+    if (*starttime) {
+      /* Calculate systematic clock drift */
+      double elapsed = (double)(time(NULL) - *starttime);
+      double drift = avgtime / elapsed;
+      printlog(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
+
+      /* Adjust the clock frequency, weighted by elapsed time */
+      if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
+        printlog(1, "Frequency change failed");
+    }
+    *starttime = time(NULL);
+  }
+
+  /* Only force DEFAULT_MIN_SLEEP for large corrections,
+     otherwise ease back off
+  */
+  if (fabs(avgtime) > (threshold * 2.0)) {
+    *interval = DEFAULT_MIN_SLEEP;
+  } else if (*interval > DEFAULT_MIN_SLEEP) {
+    (*interval)--;
+  }
+}
+
 int main(int argc, char *argv[]) {
   int       interval   = DEFAULT_MIN_SLEEP;
   int       precision  = DEFAULT_PRECISION;
-  double    drift      = 0;
   time_t    starttime  = 0;
 
   int       param;
@@ -521,83 +571,35 @@ int main(int argc, char *argv[]) {
   do {
     struct timesample samples[MAX_URLS] = {0};
     int valid_samples = 0;
-    double avgtime = 0;
+    double avgtime = INFINITY;
 
     for (int i = optind; i < argc; i++) {
       double offset;
       double rtt = 0.0;
 
       offset = bisect(argv[i], precision, &rtt);
-      if (offset != INFINITY) {
-        if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], (int)round(offset * 1000.0), (int)round(rtt * 1000.0));
-        samples[valid_samples].offset = offset;
-        samples[valid_samples].rtt = rtt;
-        valid_samples++;
-      }
+      if (offset == INFINITY)
+        continue;
+
+      if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], (int)round(offset * 1000.0), (int)round(rtt * 1000.0));
+      samples[valid_samples].offset = offset;
+      samples[valid_samples].rtt = rtt;
+      valid_samples++;
     }
 
     if (valid_samples > 0) {
       avgtime = calculate_offset(samples, valid_samples);
-
-      if (avgtime != INFINITY) {
-        // Consensus offset, median-filtered and RTT-weighted
-        if (verbose || run_mode == RUN_ONESHOT)
-          printlog(0, "Offset: %d ms", (int)round(avgtime * 1000.0));
-
-        /* Consider +/- .5s a valid sync state */
-        if (sync_mode == SYNC_MODE_DRIFT && fabs(avgtime) < 0.5)
-          setstatus();
-
-        /* Measurement resolution is +/- 1/2^precision seconds */
-        double threshold = 1.0 / (double)(1 << precision);
-
-        if (fabs(avgtime) > threshold) {
-          /* Avoid bouncing between upper/lower limit when (almost) in sync */
-          if (fabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
-
-          if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
-          if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
-
-          if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
-            if (starttime) {
-              /* Calculate systematic clock drift */
-              double elapsed = (double)(time(NULL) - starttime);
-              drift = avgtime / elapsed;
-              printlog(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
-
-              /* Adjust the clock frequency, weighted by elapsed time */
-              if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
-                printlog(1, "Frequency change failed");
-            }
-            starttime = time(NULL);
-          }
-
-          /* Only force DEFAULT_MIN_SLEEP for large corrections,
-             otherwise easing back off
-          */
-          if (fabs(avgtime) > (threshold * 2.0)) {
-            interval = DEFAULT_MIN_SLEEP;
-          } else if (interval > DEFAULT_MIN_SLEEP) {
-            interval--;
-          }
-        } else {
-          if (interval < DEFAULT_MAX_SLEEP) {
-             interval++;
-          }
-        }
-      } else {
+      if (avgtime == INFINITY)
         printlog(1, "No servers passed RTT quality and consensus filters");
-        if (run_mode == RUN_ONESHOT) {
-          curl_global_cleanup();
-          exit(1);
-        }
-      }
     } else {
       printlog(1, "No suitable servers available");
-      if (run_mode == RUN_ONESHOT) {
-        curl_global_cleanup();
-        exit(1);
-      }
+    }
+
+    if (avgtime != INFINITY) {
+      update_clock(avgtime, precision, &interval, &starttime);
+    } else if (run_mode == RUN_ONESHOT) {
+      curl_global_cleanup();
+      exit(1);
     }
 
     if (run_mode != RUN_ONESHOT) {

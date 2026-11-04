@@ -4,7 +4,7 @@ LDFLAGS ?=
 LIBS    ?= -lcurl -lm
 
 PREFIX ?= /usr/local
-BINDIR ?= $(PREFIX)/bin
+SBINDIR ?= $(PREFIX)/sbin
 MANDIR ?= $(PREFIX)/share/man
 
 all: httpdate
@@ -19,13 +19,13 @@ test: httpdate
 	./httpdate example.com example.net https://example.com
 
 install: all
-	mkdir -p $(DESTDIR)$(BINDIR)
+	mkdir -p $(DESTDIR)$(SBINDIR)
 	mkdir -p $(DESTDIR)$(MANDIR)/man8
-	install -m 755 httpdate $(DESTDIR)$(BINDIR)/httpdate
+	install -m 755 httpdate $(DESTDIR)$(SBINDIR)/httpdate
 	install -m 644 httpdate.8 $(DESTDIR)$(MANDIR)/man8/httpdate.8
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/httpdate
+	rm -f $(DESTDIR)$(SBINDIR)/httpdate
 	rm -f $(DESTDIR)$(MANDIR)/man8/httpdate.8
 
 clean:

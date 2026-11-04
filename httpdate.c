@@ -22,7 +22,7 @@
 #define DEFAULT_MIN_SLEEP       10              /* 2^10  ~17 minutes */
 #define DEFAULT_MAX_SLEEP       16              /* 2^16  ~18 hours   */
 #define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
-#define DRIFT_TAU               43200.0         /* 12-hour smoothing */
+#define DRIFT_TAU               14400.0         /* 4-hour smoothing  */
 #define PRINTBUFFERSIZE         1024
 #define MAX_PPM                 2
 #define MAX_URLS                16

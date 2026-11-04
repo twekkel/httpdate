@@ -217,9 +217,7 @@ static long getrtt(CURL *curl, double *rtt_s) {
 
 static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
   // "Force" clean timestamp
-  *list = curl_slist_append(*list, "Pragma: no-cache");
   *list = curl_slist_append(*list, "Cache-Control: no-cache");
-  *list = curl_slist_append(*list, "Connection: keep-alive");
 
   if (proxy)
     curl_easy_setopt(curl, CURLOPT_PROXY, proxy);

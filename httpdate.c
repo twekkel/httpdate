@@ -28,7 +28,7 @@
 #define MAX_URLS                16
 #define NS_SEC                  1000000000L
 #define MAX_DRIFT               32768000L       /* 500 PPM */
-#define VERSION                 "1.0.0"
+#define VERSION                 "1.0.1"
 
 enum log_dest {
   LOG_DEST_CONSOLE,

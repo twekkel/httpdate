@@ -367,11 +367,12 @@ cleanup:
   return result;
 }
 
-static double calculate_offset(struct timesample samples[], int valid_samples) {
-  double avgtime = INFINITY;
+static int calculate_offset(struct timesample samples[], int valid_samples,
+  double *out) {
+  double avgtime = 0.0;
   double total_weight = 0;
 
-  if (valid_samples == 2 && fabs(samples[0].offset - samples[1].offset) > 0.5) {
+  if (valid_samples == 2 && dabs(samples[0].offset - samples[1].offset) > 0.5) {
     avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
     total_weight = 1;
   } else {
@@ -380,20 +381,25 @@ static double calculate_offset(struct timesample samples[], int valid_samples) {
        sorted_offsets[j] = samples[j].offset;
 
     insertsort(sorted_offsets, valid_samples);
-
     double median_offset = sorted_offsets[valid_samples / 2];
+
+    // Use Median Absolute Deviation (MAD) for outlier detection
+    double devs[MAX_URLS];
+    for (int j = 0; j < valid_samples; j++)
+      devs[j] = dabs(samples[j].offset - median_offset);
+
+    insertsort(devs, valid_samples);
+    double mad = devs[valid_samples / 2];
+
+    double threshold = 3.0 * mad;
 
     double weighted_sum = 0;
 
-    /* Filter out the bogus timevalues. An offset which is more than
-       1 second off from mean, is considered a 'false ticker'.
-       NTP synced web servers can never be more off than a second.
-    */
     for (int j = 0; j < valid_samples; j++) {
-      if (fabs(samples[j].offset - median_offset) > 0.5) {
+      if (dabs(samples[j].offset - median_offset) > threshold) {
         if (verbose)
           printlog(0, "Dropping outlier: offset %d ms from median",
-          (int)round(samples[j].offset * 1000.0));
+          to_ms(samples[j].offset));
         continue;
       }
 
@@ -408,7 +414,11 @@ static double calculate_offset(struct timesample samples[], int valid_samples) {
     }
   }
 
-  return (total_weight > 0) ? avgtime : INFINITY;
+  if (total_weight <= 0)
+    return -1;
+
+  *out = avgtime;
+  return 0;
 }
 
 static void show_help(void) {

@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -511,6 +512,29 @@ static void show_help(void) {
          DEFAULT_PRECISION, MAX_OFFSET / 86400L);
 }
 
+static int daemonize(void) {
+  pid_t pid = fork();
+
+  if (pid < 0)
+    return -1;
+  if (pid > 0)
+    _exit(0);
+
+  if (setsid() < 0 || chdir("/") < 0)
+    return -1;
+
+  int fd = open("/dev/null", O_RDWR);
+  if (fd < 0)
+    return -1;
+  dup2(fd, STDIN_FILENO);
+  dup2(fd, STDOUT_FILENO);
+  dup2(fd, STDERR_FILENO);
+  if (fd > STDERR_FILENO)
+    close(fd);
+
+  return 0;
+}
+
 static int update_clock(double avgtime, int precision, int interval) {
   static time_t starttime = 0;
 
@@ -651,7 +675,7 @@ int main(int argc, char *argv[]) {
   case RUN_BACKGROUND:
     openlog("httpdate", LOG_PID | LOG_CONS, LOG_DAEMON);
 
-    if (daemon(0, 0) < 0) {
+    if (daemonize() < 0) {
       perror("daemon initialization failed");
       curl_global_cleanup();
       exit(1);

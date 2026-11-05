@@ -29,6 +29,11 @@
 #define MAX_DRIFT               32768000L       /* 500 PPM */
 #define VERSION                 "1.0.1"
 
+enum cert_mode {
+  CERT_CHECK_ENABLED,
+  CERT_CHECK_DISABLED
+};
+
 enum log_dest {
   LOG_DEST_CONSOLE,
   LOG_DEST_SYSLOG
@@ -47,6 +52,7 @@ enum sync_mode {
   SYNC_MODE_DRIFT
 };
 
+static enum cert_mode cert_mode = CERT_CHECK_ENABLED;
 static enum log_dest log_dest = LOG_DEST_CONSOLE;
 static enum run_mode run_mode = RUN_ONESHOT;
 static enum sync_mode sync_mode = SYNC_MODE_NONE;
@@ -239,6 +245,11 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
   curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
 
+  if (cert_mode == CERT_CHECK_DISABLED) {
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+  }
+
   if (verbose > 2) {
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   }
@@ -430,10 +441,11 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-adDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-acdDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
+         "  -c    disable SSL certificate check\n"
          "  -d    debug/verbose output\n"
          "  -D    run as daemon\n"
          "  -F    run daemon in foreground\n"
@@ -505,7 +517,7 @@ int main(int argc, char *argv[]) {
   int       precision  = DEFAULT_PRECISION;
 
   int       param;
-  while ((param = getopt(argc, argv, "46adhDFnp:P:svx")) != -1)
+  while ((param = getopt(argc, argv, "46acdhDFnp:P:svx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -515,6 +527,9 @@ int main(int argc, char *argv[]) {
         break;
       case 'a':
         sync_mode = SYNC_MODE_ADJUST;
+        break;
+      case 'c':
+        cert_mode = CERT_CHECK_DISABLED;
         break;
       case 'd':
         if (verbose < 3) verbose++;

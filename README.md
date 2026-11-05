@@ -130,7 +130,10 @@ For example, a daily time synchronization,
 
 | Option | Description |
 | --- | --- |
+| `-4` | Force IPv4 resolution. |
+| `-6` | Force IPv6 resolution. |
 | `-a` | Adjust time gradually using the system clock adjustment interface. |
+| `-c` | Disable SSL certificate check |
 | `-d` | Enable verbose/debug output; repeat for more detail. |
 | `-D` | Run as a daemon in the background. |
 | `-F` | Run daemon mode in the foreground, suitable for systemd. |

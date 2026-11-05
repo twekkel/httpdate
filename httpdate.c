@@ -248,12 +248,14 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   double last_rtt = 0.0;
   double total_rtt = 0.0;
   double avg_rtt = 0.0;
+  double min_rtt = INFINITY, max_rtt = 0.0;
   long offset = 0, first_offset = 0, prev_offset = 0;
   long nap = NS_SEC;
   long rtt = 0;
   long when = nap >> precision;
   long target;
   int polls = 0;
+  int steps = precision;
 
   curl = curl_easy_init();
   if (!curl) {
@@ -271,6 +273,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     goto cleanup;
   }
   rtt = getrtt(curl, &last_rtt);
+  min_rtt = max_rtt = last_rtt;
 
   do {
     if (verbose > 1)
@@ -301,6 +304,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
     /* rtt contains round trip time in nanoseconds */
     rtt = getrtt(curl, &last_rtt);
+    if (last_rtt < min_rtt) min_rtt = last_rtt;
+    if (last_rtt > max_rtt) max_rtt = last_rtt;
 
     if (remotetime[0] == '\0') {
       printlog(1, "%s no timestamp", url);
@@ -329,9 +334,19 @@ static double bisect(const char *url, int precision, double *out_rtt) {
         rtt / 1000000L, offset);
     }
 
-    precision--;
+    steps--;
     when += nap;
-  } while (precision > 0);
+
+    /* Stop if the RTT jitter exceeds the current bisection step size */
+    double jitter = max_rtt - min_rtt;
+    double step_size = (double)labs(nap) / NS_SEC;
+    if (jitter > step_size) {
+      if (verbose > 1)
+        printlog(0, "%s RTT jitter %d ms exceeds step size %d ms",
+          url, (int)round(jitter * 1000.0), (int)round(step_size * 1000.0));
+      steps = 0;
+    }
+  } while (steps > 0);
 
   if (verbose > 1) printlog(0, "when: %ld, nap: %ld", when, nap);
 
@@ -520,7 +535,7 @@ int main(int argc, char *argv[]) {
         exit(0);
       case 'x':
         sync_mode = SYNC_MODE_DRIFT;
-        if (precision < 7) precision = 7;
+        precision = 9;
         break;
       case '?':
       default:

@@ -1,6 +1,9 @@
 #define _DEFAULT_SOURCE
 
 #include <curl/curl.h>
+#if LIBCURL_VERSION_NUM < 0x073d00
+#error "httpdate needs libcurl 7.61.0 or newer"
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -38,18 +41,11 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
     }
     return 0;
 }
-struct timex { int modes; long freq; int status; };
-#define MOD_STATUS      0x0001
-#define MOD_ESTERROR    0x0002
-#define MOD_MAXERROR    0x0004
-#define MOD_FREQUENCY   0x0002
-#define STA_UNSYNC      0x0040
-static inline int adjtimex(struct timex *buf) { (void)buf; return 0; }
-#else
-#include <sys/timex.h>
 #endif
 
-#if defined __NetBSD__ || defined __FreeBSD__
+#include <sys/timex.h>
+
+#if defined __NetBSD__ || defined __FreeBSD__ || defined __APPLE__
 #define adjtimex ntp_adjtime
 #endif
 
@@ -220,9 +216,9 @@ static size_t getremotetime(void *contents, size_t size,
   return len;
 }
 
-static long offset_sec(const char *remotetime, time_t local_sec) {
+static long long offset_sec(const char *remotetime, time_t local_sec) {
   const long long remote = parse_imf_fixdate(remotetime);
-  return remote < 0 ? LONG_MAX : (long)(local_sec - remote);
+  return remote < 0 ? LLONG_MAX : (long long)(local_sec - remote);
 }
 
 static int setclock(double timedelta) {
@@ -232,7 +228,7 @@ static int setclock(double timedelta) {
   clock_gettime(CLOCK_REALTIME, &now);
   timedelta += ((double)now.tv_sec + (double)now.tv_nsec * 1e-9);
 
-  now.tv_sec  = (long)timedelta;
+  now.tv_sec  = (time_t)timedelta;
   now.tv_nsec = (long)((timedelta - (double)now.tv_sec) * 1e9);
 
   strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", gmtime(&now.tv_sec));
@@ -253,7 +249,7 @@ static int adjustclock(double timedelta) {
 
   printlog(0, "Adjusting %d ms", to_ms(timedelta));
 
-  timeofday.tv_sec  = (long)timedelta;
+  timeofday.tv_sec  = (time_t)timedelta;
   timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
 
   ret = adjtime(&timeofday, NULL);
@@ -355,7 +351,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   double last_rtt = 0.0;
   double total_rtt = 0.0;
   double min_rtt = 0.0, max_rtt = 0.0;   /* set after the first request */
-  long sec_offset = 0, first_offset = 0, prev_offset = 0;
+  long long sec_offset = 0, first_offset = 0, prev_offset = 0;
   long nap = NS_SEC;
   long rtt_ns = 0;
   long when = nap >> precision;
@@ -419,7 +415,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     }
 
     sec_offset = offset_sec(remotetime, local_sec);
-    if (sec_offset == LONG_MAX) {
+    if (sec_offset == LLONG_MAX) {
       printlog(1, "%s unknown time format", url);
       goto cleanup;
     }
@@ -436,7 +432,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     prev_offset = sec_offset;
 
     if (verbose > 1) {
-      printlog(0, "%-25s %s (%ld ms) => %ld", url, remotetime,
+      printlog(0, "%-25s %s (%ld ms) => %lld", url, remotetime,
         rtt_ns / 1000000L, sec_offset);
     }
 
@@ -699,8 +695,6 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  curl_global_init(CURL_GLOBAL_DEFAULT);
-
   switch (run_mode) {
   case RUN_ONESHOT:
     /* Run once without daemonizing or startup logging. */
@@ -711,7 +705,6 @@ int main(int argc, char *argv[]) {
 
     if (daemonize() < 0) {
       perror("daemon initialization failed");
-      curl_global_cleanup();
       exit(1);
     }
 
@@ -722,6 +715,8 @@ int main(int argc, char *argv[]) {
     printlog(0, "httpdate version "VERSION" started");
     break;
   }
+
+  curl_global_init(CURL_GLOBAL_DEFAULT);
 
   do {
     struct timesample samples[MAX_URLS] = {0};

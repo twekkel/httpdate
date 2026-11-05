@@ -176,8 +176,8 @@ static double dabs(double x) {
 }
 
 /* Seconds -> rounded milliseconds */
-static int to_ms(double sec) {
-  return (int)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
+static long long to_ms(double sec) {
+  return (long long)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
 }
 
 static void printlog(int is_error, char *format, ...) {
@@ -231,8 +231,11 @@ static int setclock(double timedelta) {
   now.tv_sec  = (time_t)timedelta;
   now.tv_nsec = (long)((timedelta - (double)now.tv_sec) * 1e9);
 
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", gmtime(&now.tv_sec));
-  printlog(0, "Set time: %s", buffer);
+  struct tm *tm = gmtime(&now.tv_sec);
+  if (tm) {
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", tm);
+    printlog(0, "Set time: %s", buffer);
+  }
 
   int ret = clock_settime(CLOCK_REALTIME, &now);
 
@@ -247,7 +250,7 @@ static int adjustclock(double timedelta) {
   struct timeval    timeofday;
   int               ret;
 
-  printlog(0, "Adjusting %d ms", to_ms(timedelta));
+  printlog(0, "Adjusting %lld ms", to_ms(timedelta));
 
   timeofday.tv_sec  = (time_t)timedelta;
   timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
@@ -276,16 +279,20 @@ static int adjust_freq(double drift, float confidence) {
   adjtimex(&tmx);
   old_freq = tmx.freq;
 
-  /* Weighted target delta based on measured drift and confidence */
-  long freq_delta = (long)(65536e6 * drift * confidence);
+  /* Weighted target delta based on measured drift and confidence.
+     Clamp in the double domain so the conversion to long cannot
+     overflow (e.g. bogus server date combined with -t). */
+  double freq_target = 65536e6 * drift * confidence;
 
   /* Slew-rate limit: MAX_PPM change per call */
-  long max_delta = MAX_PPM * 65536L;
-  if (freq_delta > max_delta) {
-    freq_delta = max_delta;
-  } else if (freq_delta < -max_delta) {
-    freq_delta = -max_delta;
+  double max_delta = (double)(MAX_PPM * 65536L);
+  if (freq_target > max_delta) {
+    freq_target = max_delta;
+  } else if (freq_target < -max_delta) {
+    freq_target = -max_delta;
   }
+
+  long freq_delta = (long)freq_target;
 
   tmx.freq = old_freq + freq_delta;
 
@@ -303,12 +310,12 @@ static int adjust_freq(double drift, float confidence) {
   return 0;
 }
 
-static long getrtt(CURL *curl, double *rtt_s) {
+static long long getrtt(CURL *curl, double *rtt_s) {
   curl_off_t t_pre = 0, t_start = 0;
   curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
   curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &t_start);
   *rtt_s = (double)(t_start - t_pre) / 1e6;
-  return (long)(t_start - t_pre) * 1000L;
+  return (long long)(t_start - t_pre) * 1000LL;
 }
 
 static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
@@ -352,10 +359,10 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   double total_rtt = 0.0;
   double min_rtt = 0.0, max_rtt = 0.0;   /* set after the first request */
   long long sec_offset = 0, first_offset = 0, prev_offset = 0;
-  long nap = NS_SEC;
-  long rtt_ns = 0;
-  long when = nap >> precision;
-  long target;
+  long long nap = NS_SEC;
+  long long rtt_ns = 0;
+  long long when = nap >> precision;
+  long long target;
   int polls = 0;
   int steps = precision;
 
@@ -379,7 +386,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
 
   do {
     if (verbose > 1)
-      printlog(0, "bisect: %i, when: %09li", polls, when);
+      printlog(0, "bisect: %i, when: %09lli", polls, when);
 
     /* Wait till we reach the desired time, "when" - latency */
     target = (when - rtt_ns / 2) % NS_SEC;
@@ -432,7 +439,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     prev_offset = sec_offset;
 
     if (verbose > 1) {
-      printlog(0, "%-25s %s (%ld ms) => %lld", url, remotetime,
+      printlog(0, "%-25s %s (%lld ms) => %lld", url, remotetime,
         rtt_ns / 1000000L, sec_offset);
     }
 
@@ -441,16 +448,16 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
 
     /* Stop if the RTT jitter exceeds the current bisection step size */
     double jitter = max_rtt - min_rtt;
-    double step_size = (double)labs(nap) / NS_SEC;
+    double step_size = (double)llabs(nap) / NS_SEC;
     if (jitter > step_size) {
       if (verbose > 1)
-        printlog(0, "%s RTT jitter %d ms exceeds step size %d ms",
+        printlog(0, "%s RTT jitter %lld ms exceeds step size %lld ms",
           url, to_ms(jitter), to_ms(step_size));
       steps = 0;
     }
   } while (steps > 0);
 
-  if (verbose > 1) printlog(0, "when: %ld, nap: %ld", when, nap);
+  if (verbose > 1) printlog(0, "when: %lld, nap: %lld", when, nap);
 
   /* Rounding */
   *offset = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
@@ -498,7 +505,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
     for (int j = 0; j < valid_samples; j++) {
       if (dabs(samples[j].offset - median_offset) > threshold) {
         if (verbose)
-          printlog(0, "Dropping outlier: offset %d ms from median",
+          printlog(0, "Dropping outlier: offset %lld ms from median",
           to_ms(samples[j].offset));
         continue;
       }
@@ -570,7 +577,7 @@ static int update_clock(double avgtime, int precision, int interval) {
 
   // Consensus offset, median-filtered and RTT-weighted
   if (verbose || run_mode == RUN_ONESHOT)
-    printlog(0, "Offset: %d ms", to_ms(avgtime));
+    printlog(0, "Offset: %lld ms", to_ms(avgtime));
 
   /* Consider +/- .5s a valid sync state */
   if (sync_mode == SYNC_MODE_DRIFT && dabs(avgtime) < 0.5)
@@ -737,7 +744,7 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], to_ms(offset), to_ms(rtt));
+      if (verbose) printlog(0, "%-25s | Offset: %lld ms | RTT: %lld ms", argv[i], to_ms(offset), to_ms(rtt));
       samples[valid_samples].offset = offset;
       samples[valid_samples].rtt = rtt;
       valid_samples++;

@@ -10,12 +10,46 @@
 #include <strings.h>
 #include <stdarg.h>
 #include <sys/time.h>
-#include <sys/timex.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
-#if defined __NetBSD__ || defined __FreeBSD__ || defined __APPLE__
+#if defined(__APPLE__)
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
+#ifndef TIMER_ABSTIME
+#define TIMER_ABSTIME 1
+#endif
+static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec *req, struct timespec *rem) {
+    (void)clock_id; (void)rem;
+    if (flags & TIMER_ABSTIME) {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        time_t diff_sec = req->tv_sec - now.tv_sec;
+        long diff_nsec = req->tv_nsec - now.tv_nsec;
+        if (diff_nsec < 0) { diff_sec--; diff_nsec += 1000000000L; }
+        if (diff_sec < 0 || (diff_sec == 0 && diff_nsec <= 0)) return 0;
+        struct timespec ts = { .tv_sec = diff_sec, .tv_nsec = diff_nsec };
+        while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
+    } else {
+        struct timespec ts = *req;
+        while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
+    }
+    return 0;
+}
+struct timex { int modes; long freq; int status; };
+#define MOD_STATUS      0x0001
+#define MOD_ESTERROR    0x0002
+#define MOD_MAXERROR    0x0004
+#define MOD_FREQUENCY   0x0002
+#define STA_UNSYNC      0x0040
+static inline int adjtimex(struct timex *buf) { (void)buf; return 0; }
+#else
+#include <sys/timex.h>
+#endif
+
+#if defined __NetBSD__ || defined __FreeBSD__
 #define adjtimex ntp_adjtime
 #endif
 

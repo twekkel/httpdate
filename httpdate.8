@@ -3,7 +3,7 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-adDFhnsvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
+[\-46acdDFhnstvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
@@ -22,6 +22,9 @@ Force IPv6 name resolution only.
 .TP
 .B \-a
 Adjust the clock gradually (slew) with adjtime(3) instead of stepping it. Repeat the run, or use daemon mode, to converge.
+.TP
+.B \-c
+Disable SSL/TLS certificate verification.
 .TP
 .B \-d
 Turn debug/verbose output on. Can be given up to three times to increase the details.
@@ -46,6 +49,9 @@ Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Ove
 .TP
 .B \-s
 Set (step) the clock immediately. Offsets are applied in full, also when smaller than one second. Not recommended together with \fB\-D\fR.
+.TP
+.B \-t
+Disable the time sanity check (offsets exceeding 365 days are ignored by default).
 .TP
 .B \-v
 Show version information.

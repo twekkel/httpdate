@@ -23,6 +23,7 @@
 #define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
 #define DRIFT_TAU               14400.0         /* 4-hour smoothing  */
 #define PRINTBUFFERSIZE         1024
+#define MAX_OFFSET              31536000L       /* 1 year in seconds */
 #define MAX_PPM                 2
 #define MAX_URLS                16
 #define NS_SEC                  1000000000L
@@ -45,6 +46,11 @@ enum run_mode {
   RUN_FOREGROUND
 };
 
+enum sanity_mode {
+  SANITY_CHECK_ENABLED,
+  SANITY_CHECK_DISABLED
+};
+
 enum sync_mode {
   SYNC_MODE_NONE,
   SYNC_MODE_SET,
@@ -55,6 +61,7 @@ enum sync_mode {
 static enum cert_mode cert_mode = CERT_CHECK_ENABLED;
 static enum log_dest log_dest = LOG_DEST_CONSOLE;
 static enum run_mode run_mode = RUN_ONESHOT;
+static enum sanity_mode sanity_mode = SANITY_CHECK_ENABLED;
 static enum sync_mode sync_mode = SYNC_MODE_NONE;
 
 static const char *proxy = NULL;
@@ -441,7 +448,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnsvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-acdDFhnstvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
@@ -454,9 +461,10 @@ static void show_help(void) {
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
          "  -s    set time\n"
+         "  -t    disable time sanity check (limit: %ld days)\n"
          "  -v    show version\n"
          "  -x    adjust time and clock frequency (drift, use with -D)\n",
-         DEFAULT_PRECISION);
+         DEFAULT_PRECISION, MAX_OFFSET / 86400L);
 }
 
 static int update_clock(double avgtime, int precision, int interval) {
@@ -517,7 +525,7 @@ int main(int argc, char *argv[]) {
   int       precision  = DEFAULT_PRECISION;
 
   int       param;
-  while ((param = getopt(argc, argv, "46acdhDFnp:P:svx")) != -1)
+  while ((param = getopt(argc, argv, "46acdhDFnp:P:stvx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -562,6 +570,9 @@ int main(int argc, char *argv[]) {
         break;
       case 's':
         sync_mode = SYNC_MODE_SET;
+        break;
+      case 't':
+        sanity_mode = SANITY_CHECK_DISABLED;
         break;
       case 'v':
         printf("httpdate version %s\n", VERSION);
@@ -622,6 +633,12 @@ int main(int argc, char *argv[]) {
 
       if (bisect(argv[i], precision, &offset, &rtt) < 0)
         continue;
+
+      if (sanity_mode == SANITY_CHECK_ENABLED && dabs(offset) > MAX_OFFSET) {
+        if (verbose)
+          printlog(0, "%-25s | Offset exceeds %ld days, ignored", argv[i], MAX_OFFSET / 86400L);
+        continue;
+      }
 
       if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], to_ms(offset), to_ms(rtt));
       samples[valid_samples].offset = offset;

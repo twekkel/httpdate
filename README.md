@@ -45,8 +45,8 @@ sudo make install
 Check the installed version and command-line options:
 
 ```sh
-/usr/local/bin/httpdate -v
-/usr/local/bin/httpdate -h
+/usr/local/sbin/httpdate -v
+/usr/local/sbin/httpdate -h
 ```
 
 ## Systemd integration
@@ -79,7 +79,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/httpdate -F example.com https://example.com example.net
+ExecStart=/usr/local/sbin/httpdate -F example.com https://example.com example.net
 User=httpdate
 Group=httpdate
 CapabilityBoundingSet=CAP_SYS_TIME
@@ -123,7 +123,7 @@ If you prefer cron over a systemd service, you can run httpdate periodically. Se
 
 For example, a daily time synchronization,
 ```
-7 3 * * * /usr/local/bin/httpdate -a www.example.com >/dev/null
+7 3 * * * /usr/local/sbin/httpdate -a www.example.com >/dev/null
 ```
 
 ## Command-line options
@@ -176,7 +176,7 @@ If the username or password contains reserved URI characters such as `@`, `:`, `
 - **No suitable servers are available:** check DNS, network access, proxy settings, and whether the configured servers return a valid HTTP `Date` header.
 - **The time estimate is inaccurate:** Accuracy depends on server quality, network latency, and the precision setting. On networks where NTP is available, dedicated time-synchronization solutions such as `chrony`, `OpenNTPD`, `ntpd`, or `ntpd-rs` are generally preferable.
 - **Proxy authentication fails:** verify the proxy URL format, ensure credentials are correct, and URL-encode reserved characters in usernames or passwords. You can also configure proxy settings through the standard `http_proxy` or `https_proxy` environment variables.
-- **The service does not start:** check the executable path and permissions, then run `/usr/local/bin/httpdate -h` to verify the installed binary.
+- **The service does not start:** check the executable path and permissions, then run `/usr/local/sbin/httpdate -h` to verify the installed binary.
 
 ## License
 

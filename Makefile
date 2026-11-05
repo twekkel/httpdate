@@ -1,7 +1,7 @@
 CC      ?= cc
 CFLAGS  ?= -Wall -std=c11 -pedantic -O2 -flto
 LDFLAGS ?=
-LIBS    ?= -lcurl -lm
+LIBS    ?= -lcurl
 
 PREFIX ?= /usr/local
 SBINDIR ?= $(PREFIX)/sbin

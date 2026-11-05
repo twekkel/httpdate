@@ -3,7 +3,6 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <limits.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,6 +71,15 @@ static void insertsort(double a[], int length) {
     }
     a[j + 1] = value;
   }
+}
+
+static double dabs(double x) {
+  return x < 0 ? -x : x;
+}
+
+/* Seconds -> rounded milliseconds */
+static int to_ms(double sec) {
+  return (int)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
 }
 
 static void printlog(int is_error, char *format, ...) {
@@ -151,7 +159,7 @@ static int adjustclock(double timedelta) {
   struct timeval    timeofday;
   int               ret;
 
-  printlog(0, "Adjusting %d ms", (int)round(timedelta * 1000.0));
+  printlog(0, "Adjusting %d ms", to_ms(timedelta));
 
   timeofday.tv_sec  = (long)timedelta;
   timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
@@ -238,20 +246,21 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
   return CURLE_OK;
 }
 
-static double bisect(const char *url, int precision, double *out_rtt) {
+/* Measure the offset of one server.
+   Returns 0 on success (results in *offset and *rtt), -1 on failure. */
+static int bisect(const char *url, int precision, double *offset, double *rtt) {
   CURL *curl = NULL;
   struct curl_slist *list = NULL;
   CURLcode res;
   struct timespec wake;
   char remotetime[25] = {0};
-  double result = INFINITY;
+  int ret = -1;
   double last_rtt = 0.0;
   double total_rtt = 0.0;
-  double avg_rtt = 0.0;
-  double min_rtt = INFINITY, max_rtt = 0.0;
-  long offset = 0, first_offset = 0, prev_offset = 0;
+  double min_rtt = 0.0, max_rtt = 0.0;   /* set after the first request */
+  long sec_offset = 0, first_offset = 0, prev_offset = 0;
   long nap = NS_SEC;
-  long rtt = 0;
+  long rtt_ns = 0;
   long when = nap >> precision;
   long target;
   int polls = 0;
@@ -259,7 +268,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
   curl = curl_easy_init();
   if (!curl) {
-    return INFINITY;
+    return -1;
   }
 
   if (setup_curl_handle(curl, &list, url, remotetime) != CURLE_OK) {
@@ -272,7 +281,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
     goto cleanup;
   }
-  rtt = getrtt(curl, &last_rtt);
+  rtt_ns = getrtt(curl, &last_rtt);
   min_rtt = max_rtt = last_rtt;
 
   do {
@@ -280,7 +289,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
       printlog(0, "bisect: %i, when: %09li", polls, when);
 
     /* Wait till we reach the desired time, "when" - latency */
-    target = (when - rtt / 2) % NS_SEC;
+    target = (when - rtt_ns / 2) % NS_SEC;
     if (target < 0) target += NS_SEC;
 
     /* Absolute wake time: next moment the wall clock reads "target" ns */
@@ -289,7 +298,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     wake.tv_nsec = target;
 
     /* Local second in which the request reaches the server */
-    time_t local_sec = wake.tv_sec + ((long long)wake.tv_nsec + rtt / 2) / NS_SEC;
+    time_t local_sec = wake.tv_sec + ((long long)wake.tv_nsec + rtt_ns / 2) / NS_SEC;
 
     while (clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &wake, NULL) == EINTR)
       ;
@@ -302,8 +311,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
       goto cleanup;
     }
 
-    /* rtt contains round trip time in nanoseconds */
-    rtt = getrtt(curl, &last_rtt);
+    /* rtt_ns contains round trip time in nanoseconds */
+    rtt_ns = getrtt(curl, &last_rtt);
     if (last_rtt < min_rtt) min_rtt = last_rtt;
     if (last_rtt > max_rtt) max_rtt = last_rtt;
 
@@ -312,8 +321,8 @@ static double bisect(const char *url, int precision, double *out_rtt) {
       goto cleanup;
     }
 
-    offset = offset_sec(remotetime, local_sec);
-    if (offset == LONG_MAX) {
+    sec_offset = offset_sec(remotetime, local_sec);
+    if (sec_offset == LONG_MAX) {
       printlog(1, "%s unknown time format", url);
       goto cleanup;
     }
@@ -323,15 +332,15 @@ static double bisect(const char *url, int precision, double *out_rtt) {
 
     nap >>= 1;
     if (polls > 1) {
-      if (offset != prev_offset) nap = -nap;
+      if (sec_offset != prev_offset) nap = -nap;
     } else {
-      first_offset = offset;
+      first_offset = sec_offset;
     }
-    prev_offset = offset;
+    prev_offset = sec_offset;
 
     if (verbose > 1) {
       printlog(0, "%-25s %s (%ld ms) => %ld", url, remotetime,
-        rtt / 1000000L, offset);
+        rtt_ns / 1000000L, sec_offset);
     }
 
     steps--;
@@ -343,7 +352,7 @@ static double bisect(const char *url, int precision, double *out_rtt) {
     if (jitter > step_size) {
       if (verbose > 1)
         printlog(0, "%s RTT jitter %d ms exceeds step size %d ms",
-          url, (int)round(jitter * 1000.0), (int)round(step_size * 1000.0));
+          url, to_ms(jitter), to_ms(step_size));
       steps = 0;
     }
   } while (steps > 0);
@@ -351,20 +360,18 @@ static double bisect(const char *url, int precision, double *out_rtt) {
   if (verbose > 1) printlog(0, "when: %ld, nap: %ld", when, nap);
 
   /* Rounding */
-  result = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
+  *offset = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
 
   /* Average RTT is only used to weight the servers in main() */
-  avg_rtt = total_rtt / polls;
+  *rtt = total_rtt / polls;
+
+  ret = 0;
 
 cleanup:
   if (list) curl_slist_free_all(list);
   if (curl) curl_easy_cleanup(curl);
 
-  if (out_rtt && result != INFINITY) {
-    *out_rtt = avg_rtt;
-  }
-
-  return result;
+  return ret;
 }
 
 static int calculate_offset(struct timesample samples[], int valid_samples,
@@ -445,16 +452,16 @@ static int update_clock(double avgtime, int precision, int interval) {
 
   // Consensus offset, median-filtered and RTT-weighted
   if (verbose || run_mode == RUN_ONESHOT)
-    printlog(0, "Offset: %d ms", (int)round(avgtime * 1000.0));
+    printlog(0, "Offset: %d ms", to_ms(avgtime));
 
   /* Consider +/- .5s a valid sync state */
-  if (sync_mode == SYNC_MODE_DRIFT && fabs(avgtime) < 0.5)
+  if (sync_mode == SYNC_MODE_DRIFT && dabs(avgtime) < 0.5)
     setstatus();
 
   /* Measurement resolution is +/- 1/2^precision seconds */
   double threshold = 1.0 / (double)(1 << precision);
 
-  if (fabs(avgtime) <= threshold) {
+  if (dabs(avgtime) <= threshold) {
     if (interval < DEFAULT_MAX_SLEEP) {
       interval++;
     }
@@ -462,7 +469,7 @@ static int update_clock(double avgtime, int precision, int interval) {
   }
 
   /* Avoid bouncing between upper/lower limit when (almost) in sync */
-  if (fabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
+  if (dabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
 
   if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
   if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
@@ -484,7 +491,7 @@ static int update_clock(double avgtime, int precision, int interval) {
   /* Only force DEFAULT_MIN_SLEEP for large corrections,
      otherwise ease back off
   */
-  if (fabs(avgtime) > (threshold * 2.0)) {
+  if (dabs(avgtime) > (threshold * 2.0)) {
     interval = DEFAULT_MIN_SLEEP;
   } else if (interval > DEFAULT_MIN_SLEEP) {
     interval--;
@@ -591,31 +598,32 @@ int main(int argc, char *argv[]) {
   do {
     struct timesample samples[MAX_URLS] = {0};
     int valid_samples = 0;
-    double avgtime = INFINITY;
+    int have_time = 0;
+    double avgtime = 0.0;
 
     for (int i = optind; i < argc; i++) {
-      double offset;
+      double offset = 0.0;
       double rtt = 0.0;
 
-      offset = bisect(argv[i], precision, &rtt);
-      if (offset == INFINITY)
+      if (bisect(argv[i], precision, &offset, &rtt) < 0)
         continue;
 
-      if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], (int)round(offset * 1000.0), (int)round(rtt * 1000.0));
+      if (verbose) printlog(0, "%-25s | Offset: %d ms | RTT: %d ms", argv[i], to_ms(offset), to_ms(rtt));
       samples[valid_samples].offset = offset;
       samples[valid_samples].rtt = rtt;
       valid_samples++;
     }
 
     if (valid_samples > 0) {
-      avgtime = calculate_offset(samples, valid_samples);
-      if (avgtime == INFINITY)
+      if (calculate_offset(samples, valid_samples, &avgtime) == 0)
+        have_time = 1;
+      else
         printlog(1, "No servers passed RTT quality and consensus filters");
     } else {
       printlog(1, "No suitable servers available");
     }
 
-    if (avgtime != INFINITY) {
+    if (have_time) {
       interval = update_clock(avgtime, precision, interval);
     } else if (run_mode == RUN_ONESHOT) {
       curl_global_cleanup();

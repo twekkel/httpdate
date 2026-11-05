@@ -20,7 +20,7 @@
 #endif
 
 #define DEFAULT_MIN_SLEEP       10              /* 2^10  ~17 minutes */
-#define DEFAULT_MAX_SLEEP       16              /* 2^16  ~18 hours   */
+#define DEFAULT_MAX_SLEEP       14              /* 2^14  ~4.5 hours  */
 #define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
 #define DRIFT_TAU               14400.0         /* 4-hour smoothing  */
 #define PRINTBUFFERSIZE         1024
@@ -440,8 +440,8 @@ static void show_help(void) {
          DEFAULT_PRECISION);
 }
 
-static void update_clock(double avgtime, int precision, int *interval,
-  time_t *starttime) {
+static int update_clock(double avgtime, int precision, int interval) {
+  static time_t starttime = 0;
 
   // Consensus offset, median-filtered and RTT-weighted
   if (verbose || run_mode == RUN_ONESHOT)
@@ -455,10 +455,10 @@ static void update_clock(double avgtime, int precision, int *interval,
   double threshold = 1.0 / (double)(1 << precision);
 
   if (fabs(avgtime) <= threshold) {
-    if (*interval < DEFAULT_MAX_SLEEP) {
-      (*interval)++;
+    if (interval < DEFAULT_MAX_SLEEP) {
+      interval++;
     }
-    return;
+    return interval;
   }
 
   /* Avoid bouncing between upper/lower limit when (almost) in sync */
@@ -468,9 +468,9 @@ static void update_clock(double avgtime, int precision, int *interval,
   if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
 
   if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
-    if (*starttime) {
+    if (starttime) {
       /* Calculate systematic clock drift */
-      double elapsed = (double)(time(NULL) - *starttime);
+      double elapsed = (double)(time(NULL) - starttime);
       double drift = avgtime / elapsed;
       printlog(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
 
@@ -478,23 +478,24 @@ static void update_clock(double avgtime, int precision, int *interval,
       if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
         printlog(1, "Frequency change failed");
     }
-    *starttime = time(NULL);
+    starttime = time(NULL);
   }
 
   /* Only force DEFAULT_MIN_SLEEP for large corrections,
      otherwise ease back off
   */
   if (fabs(avgtime) > (threshold * 2.0)) {
-    *interval = DEFAULT_MIN_SLEEP;
-  } else if (*interval > DEFAULT_MIN_SLEEP) {
-    (*interval)--;
+    interval = DEFAULT_MIN_SLEEP;
+  } else if (interval > DEFAULT_MIN_SLEEP) {
+    interval--;
   }
+
+  return interval;
 }
 
 int main(int argc, char *argv[]) {
   int       interval   = DEFAULT_MIN_SLEEP;
   int       precision  = DEFAULT_PRECISION;
-  time_t    starttime  = 0;
 
   int       param;
   while ((param = getopt(argc, argv, "46adhDFnp:P:svx")) != -1)
@@ -615,7 +616,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (avgtime != INFINITY) {
-      update_clock(avgtime, precision, &interval, &starttime);
+      interval = update_clock(avgtime, precision, interval);
     } else if (run_mode == RUN_ONESHOT) {
       curl_global_cleanup();
       exit(1);

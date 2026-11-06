@@ -604,7 +604,10 @@ static int update_clock(double avgtime, int precision, int interval) {
   }
 
   if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
-  if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);
+  if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) {
+    if (adjustclock(avgtime) < 0)
+      printlog(1, "adjtime failed: %s", strerror(errno));
+  }
 
   if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
     if (starttime) {

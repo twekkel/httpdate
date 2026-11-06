@@ -56,7 +56,7 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 #define PRINTBUFFERSIZE         1024
 #define MAX_OFFSET              1000L
 #define MAX_PPM                 2
-#define MAX_URLS                16
+#define MAX_URLS                8
 #define NS_SEC                  1000000000L
 #define MAX_DRIFT               32768000L       /* 500 PPM */
 #define VERSION                 "1.0.1"
@@ -484,20 +484,19 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
     avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
     total_weight = 1;
   } else {
-    double sorted_offsets[MAX_URLS];
+    double tmp[MAX_URLS];
     for (int j = 0; j < valid_samples; j++)
-       sorted_offsets[j] = samples[j].offset;
+       tmp[j] = samples[j].offset;
 
-    insertsort(sorted_offsets, valid_samples);
-    double median_offset = sorted_offsets[valid_samples / 2];
+    insertsort(tmp, valid_samples);
+    double median_offset = tmp[valid_samples / 2];
 
     // Use Median Absolute Deviation (MAD) for outlier detection
-    double devs[MAX_URLS];
     for (int j = 0; j < valid_samples; j++)
-      devs[j] = dabs(samples[j].offset - median_offset);
+      tmp[j] = dabs(samples[j].offset - median_offset);
 
-    insertsort(devs, valid_samples);
-    double mad = devs[valid_samples / 2];
+    insertsort(tmp, valid_samples);
+    double mad = tmp[valid_samples / 2];
 
     double threshold = 3.0 * mad;
 

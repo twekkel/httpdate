@@ -53,8 +53,8 @@ static uint64_t get_current_ntp_timestamp(void) {
   gettimeofday(&tv, NULL);
   
   uint64_t ntp_time = unix_to_ntp(tv.tv_sec);
-  // Add fractional seconds (nanoseconds precision)
-  uint64_t frac = ((uint64_t)tv.tv_usec << 32) / 1000000UL;
+  // Add fractional seconds: (microseconds / 1000000) * 2^32
+  uint64_t frac = ((uint64_t)tv.tv_usec * 4294967296ULL) / 1000000ULL;
   return ntp_time | (frac & 0xFFFFFFFFULL);
 }
 
@@ -102,6 +102,10 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   socklen_t client_len, uint8_t stratum) {
   char buf[NTP_PACKET_SIZE];
   struct ntp_packet *packet = (struct ntp_packet *)buf;
+  struct timeval tv_recv;
+  
+  // Get receive timestamp BEFORE reading (as close as possible to actual receive time)
+  gettimeofday(&tv_recv, NULL);
   
   // Read request
   ssize_t bytes_read = recvfrom(sockfd, buf, sizeof(buf), 0,
@@ -117,6 +121,10 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
     return; // Not a client request
   }
 
+  // Get transmit timestamp
+  struct timeval tv_xmit;
+  gettimeofday(&tv_xmit, NULL);
+  
   // Prepare response
   struct ntp_packet response;
   memset(&response, 0, sizeof(response));
@@ -130,21 +138,21 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   response.poll = 6; // Default poll interval (64 seconds)
   response.precision = -6; // ~15.26 ms precision (signed char)
   
-  // Get current time
-  uint64_t now = get_current_ntp_timestamp();
-  
-  // Copy originate timestamp from request
+  // Copy originate timestamp from request (T1 = client's transmit timestamp)
   response.orig_timestamp = packet->tx_timestamp;
   
-  // Set receive timestamp (when we received the request)
-  // For simplicity, we use the same as transmit timestamp
-  response.rx_timestamp = now;
+  // Set receive timestamp (T2 = when we received the request)
+  response.rx_timestamp = unix_to_ntp(tv_recv.tv_sec);
+  uint64_t frac_recv = ((uint64_t)tv_recv.tv_usec * 4294967296ULL) / 1000000ULL;
+  response.rx_timestamp |= (frac_recv & 0xFFFFFFFFULL);
   
-  // Set transmit timestamp (when we send the response)
-  response.tx_timestamp = now;
+  // Set transmit timestamp (T4 = when we send the response)
+  response.tx_timestamp = unix_to_ntp(tv_xmit.tv_sec);
+  uint64_t frac_xmit = ((uint64_t)tv_xmit.tv_usec * 4294967296ULL) / 1000000ULL;
+  response.tx_timestamp |= (frac_xmit & 0xFFFFFFFFULL);
   
-  // Reference timestamp - use current time as reference
-  response.ref_timestamp = now;
+  // Reference timestamp (T3 = when we last synchronized, use current time for local clock)
+  response.ref_timestamp = response.tx_timestamp;
   
   // Reference ID - use LOCL (local clock) reference
   // LOCL is represented as ASCII "LOCL" in network byte order

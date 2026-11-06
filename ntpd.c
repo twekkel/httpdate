@@ -215,6 +215,7 @@ void run_ntp_server(uint8_t stratum, int foreground) {
     }
     
     if (bytes_read >= (ssize_t)sizeof(struct ntp_packet)) {
+      fprintf(stderr, "dummy line to get a response, without I get no eligible servers\n");
       handle_ntp_request(sockfd, &client_addr, client_len, stratum);
     }
   }

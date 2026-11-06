@@ -13,11 +13,12 @@ Door meerdere HTTP(S)-requests rond een secondewisseling uit te voeren, kan de s
 
 ## Minimale NTP-server
 
-- Implementeer een minimale NTP-server die met `httpdate` integreert.
-- Zet de servercode in een apart bestand: `ntpd.c`.
-- Start de server met de optie `-S <1..9>`.
-  - De server luistert op UDP-poort 123.
-  - De optionele waarde `<1..9>` bepaalt het stratum.
-- Integreer de server met `httpdate.c`.
-- Pas de `Makefile` aan.
-
+v Implementeer een minimale NTP-server die met `httpdate` integreert.
+v Zet de servercode in een apart bestand: `ntpd.c`.
+v Start de server met de optie `-S <1..9>`.
+  v De server luistert op UDP-poort 123.
+  v De optionele waarde `<1..9>` bepaalt het stratum.
+v Integreer de server met `httpdate.c`.
+v Pas de `Makefile` aan.
+- troubleshoot
+- maak het productie kwaliteit

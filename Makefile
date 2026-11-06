@@ -9,8 +9,8 @@ MANDIR ?= $(PREFIX)/share/man
 
 all: httpdate
 
-httpdate: httpdate.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ httpdate.o $(LIBS)
+httpdate: httpdate.o ntpd.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ httpdate.o ntpd.o $(LIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

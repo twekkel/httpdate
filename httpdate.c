@@ -4,6 +4,7 @@
 #if LIBCURL_VERSION_NUM < 0x073d00
 #error "httpdate needs libcurl 7.61.0 or newer"
 #endif
+#include "ntpd.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -98,6 +99,7 @@ static enum sync_mode sync_mode = SYNC_MODE_NONE;
 static const char *proxy = NULL;
 static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
+static int ntp_stratum   = 0; // 0 = disabled, 1-9 = stratum level
 
 struct timesample {
   const char *url;
@@ -519,7 +521,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnstvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-acdDFhnstvx] [-p #] [-P proxy] [-S stratum] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
@@ -531,6 +533,7 @@ static void show_help(void) {
          "  -n    ignore proxy environment variables\n"
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
+         "  -S    start NTP server with stratum (1..9)\n"
          "  -s    set time\n"
          "  -t    disable time sanity check (limit: %ld s)\n"
          "  -v    show version\n"
@@ -629,7 +632,7 @@ int main(int argc, char *argv[]) {
   int       precision  = DEFAULT_PRECISION;
 
   int       param;
-  while ((param = getopt(argc, argv, "46acdhDFnp:P:stvx")) != -1)
+  while ((param = getopt(argc, argv, "46acdhDFnp:P:S:stvx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -671,6 +674,13 @@ int main(int argc, char *argv[]) {
         break;
       case 'P':
         proxy = optarg;
+        break;
+      case 'S':
+        ntp_stratum = atoi(optarg);
+        if (ntp_stratum < 1 || ntp_stratum > 9) {
+          fprintf(stderr, "Error: stratum must be between 1 and 9\n");
+          exit(1);
+        }
         break;
       case 's':
         sync_mode = SYNC_MODE_SET;
@@ -723,6 +733,22 @@ int main(int argc, char *argv[]) {
   }
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
+
+  // Start NTP server if -S option was specified
+  if (ntp_stratum > 0) {
+    pid_t pid = fork();
+    if (pid < 0) {
+      perror("Failed to fork for NTP server");
+      exit(1);
+    }
+    if (pid == 0) {
+      // Child process: run NTP server
+      run_ntp_server((uint8_t)ntp_stratum, 0);
+      exit(0);
+    }
+    // Parent continues with httpdate
+    print_log(0, "NTP server started with stratum %d", ntp_stratum);
+  }
 
   do {
     struct timesample samples[MAX_URLS] = {0};

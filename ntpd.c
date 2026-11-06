@@ -16,6 +16,13 @@
 #include <time.h>
 #include <unistd.h>
 
+// Convert 64-bit host to network byte order
+static uint64_t htonll(uint64_t val) {
+  uint32_t hi = htonl((uint32_t)(val >> 32));
+  uint32_t lo = htonl((uint32_t)val);
+  return ((uint64_t)hi << 32) | lo;
+}
+
 #define NTP_PORT 123
 #define NTP_VERSION 4
 #define NTP_PACKET_SIZE 48
@@ -44,20 +51,10 @@ static void handle_signal(int sig) {
 
 // Convert Unix time to NTP timestamp format (network byte order)
 // Note: time_t may be signed 32-bit, so cast to uint64_t first to avoid overflow
-static uint64_t unix_to_ntp(time_t unix_time) {
+static uint64_t make_ntp_timestamp(time_t unix_time, uint32_t frac) {
   uint32_t seconds = (uint32_t)(unix_time + 2208988800ULL);
-  return ((uint64_t)htonl(seconds)) << 32;
-}
-
-// Get current NTP timestamp
-static uint64_t get_current_ntp_timestamp(void) {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  
-  uint64_t ntp_time = unix_to_ntp(tv.tv_sec);
-  // Add fractional seconds: (microseconds / 1000000) * 2^32
-  uint64_t frac = ((uint64_t)tv.tv_usec * 4294967296ULL) / 1000000ULL;
-  return ntp_time | (frac & 0xFFFFFFFFULL);
+  uint64_t timestamp = ((uint64_t)htonl(seconds) << 32) | htonl(frac);
+  return htonll(timestamp);
 }
 
 // Create and bind UDP socket
@@ -144,14 +141,12 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   response.orig_timestamp = packet->tx_timestamp;
   
   // Set receive timestamp (T2 = when we received the request)
-  response.rx_timestamp = unix_to_ntp(tv_recv.tv_sec);
   uint32_t frac_recv = (uint32_t)(((uint64_t)tv_recv.tv_usec * 4294967296ULL) / 1000000ULL);
-  response.rx_timestamp |= htonl(frac_recv);
+  response.rx_timestamp = make_ntp_timestamp(tv_recv.tv_sec, frac_recv);
   
   // Set transmit timestamp (T4 = when we send the response)
-  response.tx_timestamp = unix_to_ntp(tv_xmit.tv_sec);
   uint32_t frac_xmit = (uint32_t)(((uint64_t)tv_xmit.tv_usec * 4294967296ULL) / 1000000ULL);
-  response.tx_timestamp |= htonl(frac_xmit);
+  response.tx_timestamp = make_ntp_timestamp(tv_xmit.tv_sec, frac_xmit);
   
   // Reference timestamp (T3 = when we last synchronized, use current time for local clock)
   response.ref_timestamp = response.tx_timestamp;

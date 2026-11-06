@@ -252,6 +252,10 @@ static int adjust_clock(double timedelta) {
 
   timeofday.tv_sec  = (time_t)timedelta;
   timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
+  if (timeofday.tv_usec < 0) {
+    timeofday.tv_usec += 1000000L;
+    timeofday.tv_sec--;
+  }
 
   return adjtime(&timeofday, NULL);
 }

@@ -16,30 +16,28 @@
 #include <time.h>
 #include <unistd.h>
 
-// Convert 64-bit host to network byte order
-static uint64_t htonll(uint64_t val) {
-  uint32_t hi = htonl((uint32_t)(val >> 32));
-  uint32_t lo = htonl((uint32_t)val);
-  return ((uint64_t)hi << 32) | lo;
-}
-
 #define NTP_PORT 123
 #define NTP_VERSION 4
 #define NTP_PACKET_SIZE 48
+#define NTP_EPOCH_OFFSET 2208988800ULL  // 1900 - 1970 in seconds
 
-// NTP packet structure (simplified)
+// NTP packet structure (RFC 5905)
 struct ntp_packet {
-  uint8_t li_vn_mode;      // Leap indicator, version, mode
+  uint8_t li_vn_mode;      // Leap indicator (2 bits), version (3 bits), mode (3 bits)
   uint8_t stratum;         // Stratum level
   uint8_t poll;            // Poll interval
-  uint8_t precision;       // Precision
-  uint32_t root_delay;     // Root delay
-  uint32_t root_dispersion; // Root dispersion
-  uint32_t ref_id;         // Reference ID
-  uint64_t ref_timestamp;  // Reference timestamp
-  uint64_t orig_timestamp; // Originate timestamp
-  uint64_t rx_timestamp;   // Receive timestamp
-  uint64_t tx_timestamp;   // Transmit timestamp
+  int8_t precision;        // Precision (signed)
+  uint32_t root_delay;     // Root delay (network byte order)
+  uint32_t root_dispersion; // Root dispersion (network byte order)
+  uint32_t ref_id;         // Reference ID (network byte order)
+  uint32_t ref_timestamp_sec;   // Reference timestamp - seconds (network byte order)
+  uint32_t ref_timestamp_frac;  // Reference timestamp - fraction (network byte order)
+  uint32_t orig_timestamp_sec;   // Originate timestamp - seconds (network byte order)
+  uint32_t orig_timestamp_frac;  // Originate timestamp - fraction (network byte order)
+  uint32_t rx_timestamp_sec;     // Receive timestamp - seconds (network byte order)
+  uint32_t rx_timestamp_frac;    // Receive timestamp - fraction (network byte order)
+  uint32_t tx_timestamp_sec;     // Transmit timestamp - seconds (network byte order)
+  uint32_t tx_timestamp_frac;    // Transmit timestamp - fraction (network byte order)
 } __attribute__((packed));
 
 static volatile sig_atomic_t running = 1;
@@ -49,12 +47,22 @@ static void handle_signal(int sig) {
   running = 0;
 }
 
-// Convert Unix time to NTP timestamp format (network byte order)
-// Note: time_t may be signed 32-bit, so cast to uint64_t first to avoid overflow
-static uint64_t make_ntp_timestamp(time_t unix_time, uint32_t frac) {
-  uint32_t seconds = (uint32_t)(unix_time + 2208988800ULL);
-  uint64_t timestamp = ((uint64_t)seconds << 32) | frac;
-  return htonll(timestamp);
+// Convert fractional seconds (useconds) to NTP fraction (2^32)
+static uint32_t usec_to_ntp_frac(uint32_t usec) {
+  // (usec / 1000000) * 2^32 = (usec * 2^32) / 1000000
+  // Use fixed-point arithmetic to avoid floating point
+  // 2^32 / 1000000 = 4294.967296
+  // So: frac = usec * 4294 + (usec * 0.967296) approximately
+  // Using integer arithmetic: (usec * 4294967296ULL) / 1000000ULL
+  return (uint32_t)(((uint64_t)usec * 4294967296ULL) / 1000000ULL);
+}
+
+// Get current NTP timestamp in host byte order
+static void get_current_ntp_timestamp(uint32_t *sec, uint32_t *frac) {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  *sec = (uint32_t)(tv.tv_sec + NTP_EPOCH_OFFSET);
+  *frac = usec_to_ntp_frac(tv.tv_usec);
 }
 
 // Create and bind UDP socket
@@ -101,7 +109,7 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   socklen_t client_len, uint8_t stratum) {
   char buf[NTP_PACKET_SIZE];
   struct ntp_packet *packet = (struct ntp_packet *)buf;
-  struct timeval tv_recv;
+  struct timeval tv_recv, tv_xmit;
   
   // Get receive timestamp BEFORE reading (as close as possible to actual receive time)
   gettimeofday(&tv_recv, NULL);
@@ -121,7 +129,6 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   }
 
   // Get transmit timestamp
-  struct timeval tv_xmit;
   gettimeofday(&tv_xmit, NULL);
   
   // Prepare response
@@ -137,23 +144,34 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   response.poll = 6; // Default poll interval (64 seconds)
   response.precision = -6; // ~15.26 ms precision (signed char)
   
-  // Copy originate timestamp from request (T1 = client's transmit timestamp)
-  response.orig_timestamp = packet->tx_timestamp;
+  // Root delay and dispersion - 0 for local clock
+  response.root_delay = htonl(0);
+  response.root_dispersion = htonl(0);
   
-  // Set receive timestamp (T2 = when we received the request)
-  uint32_t frac_recv = (uint32_t)(((uint64_t)tv_recv.tv_usec * 4294967296ULL) / 1000000ULL);
-  response.rx_timestamp = make_ntp_timestamp(tv_recv.tv_sec, frac_recv);
-  
-  // Set transmit timestamp (T4 = when we send the response)
-  uint32_t frac_xmit = (uint32_t)(((uint64_t)tv_xmit.tv_usec * 4294967296ULL) / 1000000ULL);
-  response.tx_timestamp = make_ntp_timestamp(tv_xmit.tv_sec, frac_xmit);
-  
-  // Reference timestamp (T3 = when we last synchronized, use current time for local clock)
-  response.ref_timestamp = response.tx_timestamp;
-  
-  // Reference ID - use LOCL (local clock) reference
-  // LOCL is represented as ASCII "LOCL" in network byte order
+  // Reference ID - LOCL (local clock)
   response.ref_id = htonl(0x4C4F434C); // "LOCL" in hex
+  
+  // Reference timestamp (T3) - use current time for local clock
+  uint32_t ref_sec, ref_frac;
+  get_current_ntp_timestamp(&ref_sec, &ref_frac);
+  response.ref_timestamp_sec = htonl(ref_sec);
+  response.ref_timestamp_frac = htonl(ref_frac);
+  
+  // Originate timestamp (T1) - copy from request's transmit timestamp
+  response.orig_timestamp_sec = packet->tx_timestamp_sec;
+  response.orig_timestamp_frac = packet->tx_timestamp_frac;
+  
+  // Receive timestamp (T2) - when we received the request
+  uint32_t rx_sec = (uint32_t)(tv_recv.tv_sec + NTP_EPOCH_OFFSET);
+  uint32_t rx_frac = usec_to_ntp_frac(tv_recv.tv_usec);
+  response.rx_timestamp_sec = htonl(rx_sec);
+  response.rx_timestamp_frac = htonl(rx_frac);
+  
+  // Transmit timestamp (T4) - when we send the response
+  uint32_t tx_sec = (uint32_t)(tv_xmit.tv_sec + NTP_EPOCH_OFFSET);
+  uint32_t tx_frac = usec_to_ntp_frac(tv_xmit.tv_usec);
+  response.tx_timestamp_sec = htonl(tx_sec);
+  response.tx_timestamp_frac = htonl(tx_frac);
 
   // Send response
   sendto(sockfd, &response, sizeof(response), 0,
@@ -221,7 +239,6 @@ void run_ntp_server(uint8_t stratum, int foreground) {
     }
     
     if (bytes_read >= (ssize_t)sizeof(struct ntp_packet)) {
-      fprintf(stderr, "dummy line to get a response, without I get no eligible servers\n");
       handle_ntp_request(sockfd, &client_addr, client_len, stratum);
     }
   }

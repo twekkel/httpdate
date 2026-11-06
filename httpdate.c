@@ -311,11 +311,10 @@ static int adjust_freq(double drift, float confidence) {
   return 0;
 }
 
-static long long getrtt(CURL *curl, double *rtt_s) {
+static long long getrtt(CURL *curl) {
   curl_off_t t_pre = 0, t_start = 0;
   curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
   curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &t_start);
-  *rtt_s = (double)(t_start - t_pre) / 1e6;
   return (long long)(t_start - t_pre) * 1000LL;
 }
 
@@ -354,7 +353,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   struct curl_slist *list = NULL;
   CURLcode res;
   struct timespec wake;
-  char remotetime[25] = {0};
+  char remotetime[21] = {0};
   int ret = -1;
   double last_rtt = 0.0;
   double total_rtt = 0.0;
@@ -365,7 +364,6 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   long long when = nap >> precision;
   long long target;
   int polls = 0;
-  int steps = precision;
 
   curl = curl_easy_init();
   if (!curl) {
@@ -382,7 +380,8 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
     goto cleanup;
   }
-  rtt_ns = getrtt(curl, &last_rtt);
+  rtt_ns = getrtt(curl);
+  last_rtt = (double)rtt_ns * 1e-9;
   min_rtt = max_rtt = last_rtt;
 
   do {
@@ -413,7 +412,8 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     }
 
     /* rtt_ns contains round trip time in nanoseconds */
-    rtt_ns = getrtt(curl, &last_rtt);
+    rtt_ns = getrtt(curl);
+    last_rtt = (double)rtt_ns * 1e-9;
     if (last_rtt < min_rtt) min_rtt = last_rtt;
     if (last_rtt > max_rtt) max_rtt = last_rtt;
 
@@ -444,7 +444,6 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
         rtt_ns / 1000000L, sec_offset);
     }
 
-    steps--;
     when += nap;
 
     /* Stop if the RTT jitter exceeds the current bisection step size */
@@ -454,9 +453,9 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
       if (verbose > 1)
         printlog(0, "%s RTT jitter %lld ms exceeds step size %lld ms",
           url, to_ms(jitter), to_ms(step_size));
-      steps = 0;
+      break;
     }
-  } while (steps > 0);
+  } while (polls < precision);
 
   if (verbose > 1) printlog(0, "when: %lld, nap: %lld", when, nap);
 

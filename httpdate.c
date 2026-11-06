@@ -25,21 +25,21 @@
 #define TIMER_ABSTIME 1
 #endif
 static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec *req, struct timespec *rem) {
-    (void)clock_id; (void)rem;
-    if (flags & TIMER_ABSTIME) {
-        struct timespec now;
-        clock_gettime(CLOCK_REALTIME, &now);
-        time_t diff_sec = req->tv_sec - now.tv_sec;
-        long diff_nsec = req->tv_nsec - now.tv_nsec;
-        if (diff_nsec < 0) { diff_sec--; diff_nsec += 1000000000L; }
-        if (diff_sec < 0 || (diff_sec == 0 && diff_nsec <= 0)) return 0;
-        struct timespec ts = { .tv_sec = diff_sec, .tv_nsec = diff_nsec };
-        while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
-    } else {
-        struct timespec ts = *req;
-        while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
-    }
-    return 0;
+  (void)clock_id; (void)rem;
+  if (flags & TIMER_ABSTIME) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    time_t diff_sec = req->tv_sec - now.tv_sec;
+    long diff_nsec = req->tv_nsec - now.tv_nsec;
+    if (diff_nsec < 0) { diff_sec--; diff_nsec += 1000000000L; }
+    if (diff_sec < 0 || (diff_sec == 0 && diff_nsec <= 0)) return 0;
+    struct timespec ts = { .tv_sec = diff_sec, .tv_nsec = diff_nsec };
+    while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
+  } else {
+    struct timespec ts = *req;
+    while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
+  }
+  return 0;
 }
 #endif
 
@@ -49,16 +49,16 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 #define adjtimex ntp_adjtime
 #endif
 
-#define DEFAULT_MIN_SLEEP       10              /* 2^10  ~17 minutes */
-#define DEFAULT_MAX_SLEEP       14              /* 2^14  ~4.5 hours  */
-#define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
-#define DRIFT_TAU               14400.0         /* 4-hour smoothing  */
+#define DEFAULT_MIN_SLEEP       10              // 2^10  ~17 minutes
+#define DEFAULT_MAX_SLEEP       14              // 2^14  ~4.5 hours
+#define DEFAULT_PRECISION       3               // 3  +/- 125 ms
+#define DRIFT_TAU               14400.0         // 4-hour smoothing
 #define PRINTBUFFERSIZE         1024
 #define MAX_OFFSET              1000L
 #define MAX_PPM                 2
 #define MAX_URLS                8
 #define NS_SEC                  1000000000L
-#define MAX_DRIFT               32768000L       /* 500 PPM */
+#define MAX_DRIFT               32768000L       // 500 PPM
 #define VERSION                 "1.0.1"
 
 enum cert_mode {
@@ -100,24 +100,23 @@ static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
 
 struct timesample {
+  const char *url;
   double offset;
   double rtt;
 };
 
-static int num(const char *p, int n)
-{
-    int v = 0;
-    while (n--) {
-        unsigned d = (unsigned char)*p++ - '0';
-        if (d > 9) return -1;
-        v = v * 10 + (int)d;
-    }
-    return v;
+static int num(const char *p, int n) {
+  int v = 0;
+  while (n--) {
+    unsigned d = (unsigned char)*p++ - '0';
+    if (d > 9) return -1;
+    v = v * 10 + (int)d;
+  }
+  return v;
 }
 
 // "DD Mon YYYY HH:MM:SS" (UTC) -> Unix time, or -1 on error
-static long long parse_imf_fixdate(const char *s)
-{
+static long long parse_imf_fixdate(const char *s) {
   static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
   static const short cum[13] = {0,31,59,90,120,151,181,212,243,273,304,334,365};
 
@@ -158,8 +157,8 @@ static long long parse_imf_fixdate(const char *s)
   return ((days * 24 + h) * 60 + mi) * 60 + sec;
 }
 
-/* Insertion sort is more efficient (and smaller) than qsort for small lists */
-static void insertsort(double a[], int length) {
+// Insertion sort is more efficient (and smaller) than qsort for small lists
+static void insert_sort(double a[], int length) {
   for (int i = 1; i < length; i++) {
     double value = a[i];
     int j;
@@ -175,12 +174,12 @@ static double dabs(double x) {
   return x < 0 ? -x : x;
 }
 
-/* Seconds -> rounded milliseconds */
+// Seconds -> rounded milliseconds
 static long long to_ms(double sec) {
   return (long long)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
 }
 
-static void printlog(int is_error, char *format, ...) {
+static void print_log(int is_error, char *format, ...) {
   va_list args;
   char buf[PRINTBUFFERSIZE];
 
@@ -202,7 +201,7 @@ static void printlog(int is_error, char *format, ...) {
     }
 }
 
-static size_t getremotetime(void *contents, size_t size,
+static size_t get_remote_time(void *contents, size_t size,
   size_t nmemb, void *userdata) {
   const char *buffer = contents;
   char *remotetime   = userdata;
@@ -221,7 +220,7 @@ static long long offset_sec(const char *remotetime, time_t local_sec) {
   return remote < 0 ? LLONG_MAX : (long long)(local_sec - remote);
 }
 
-static int setclock(double timedelta) {
+static int set_clock(double timedelta) {
   struct timespec now;
   char   buffer[32] = {0};
 
@@ -234,58 +233,52 @@ static int setclock(double timedelta) {
   struct tm *tm = gmtime(&now.tv_sec);
   if (tm) {
     strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", tm);
-    printlog(0, "Set time: %s", buffer);
+    print_log(0, "Set time: %s", buffer);
   }
 
   int ret = clock_settime(CLOCK_REALTIME, &now);
 
   if (ret) {
-    printlog(1, "error setting time: %s", strerror(errno));
+    print_log(1, "error setting time: %s", strerror(errno));
   }
 
   return ret;
 }
 
-static int adjustclock(double timedelta) {
+static int adjust_clock(double timedelta) {
   struct timeval    timeofday;
-  int               ret;
 
-  printlog(0, "Adjusting %lld ms", to_ms(timedelta));
+  print_log(0, "Adjusting %lld ms", to_ms(timedelta));
 
   timeofday.tv_sec  = (time_t)timedelta;
   timeofday.tv_usec = (long)((timedelta - (double)timeofday.tv_sec) * 1e6L);
 
-  ret = adjtime(&timeofday, NULL);
-  return(ret);
+  return adjtime(&timeofday, NULL);
 }
 
-static int setstatus(void) {
+static int set_status(void) {
   struct timex txc = {0};
 
   txc.modes = MOD_STATUS | MOD_ESTERROR | MOD_MAXERROR;
   txc.status &= ~STA_UNSYNC;
   if (verbose)
-    printlog(0, "Set clock synchronized");
+    print_log(0, "Set clock synchronized");
 
-  return(adjtimex(&txc));
+  return adjtimex(&txc);
 }
 
 static int adjust_freq(double drift, float confidence) {
   struct timex tmx = {0};
   long old_freq;
 
-  /* Read current clock frequency */
-  tmx.modes = 0;
   adjtimex(&tmx);
   old_freq = tmx.freq;
 
-  /* Weighted target delta based on measured drift and confidence.
-     Clamp in the double domain so the conversion to long cannot
-     overflow (e.g. bogus server date combined with -t). */
+  // Clamp in the double domain: converting NaN/out-of-range to long is UB
   double freq_target = 65536e6 * drift * confidence;
   if (freq_target != freq_target) return -1;
 
-  /* Slew-rate limit: MAX_PPM change per call */
+  // Slew-rate limit: MAX_PPM change per call
   double max_delta = (double)(MAX_PPM * 65536L);
   if (freq_target > max_delta) {
     freq_target = max_delta;
@@ -297,21 +290,21 @@ static int adjust_freq(double drift, float confidence) {
 
   tmx.freq = old_freq + freq_delta;
 
-  /* Enforce absolute safety bounds */
+  // Enforce absolute safety bounds
   if ((tmx.freq < -MAX_DRIFT) || (tmx.freq > MAX_DRIFT))
     tmx.freq = (tmx.freq < 0 ? -1 : 1) * MAX_DRIFT;
   tmx.modes = MOD_FREQUENCY;
 
   if (adjtimex(&tmx) < 0) {
-    printlog(1, "Frequency change failed: %s", strerror(errno));
+    print_log(1, "Frequency change failed: %s", strerror(errno));
     return -1;
   }
 
-  printlog(0, "Set frequency %li", tmx.freq);
+  print_log(0, "Set frequency %li", tmx.freq);
   return 0;
 }
 
-static long long getrtt(CURL *curl) {
+static long long get_rtt(CURL *curl) {
   curl_off_t t_pre = 0, t_start = 0;
   curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
   curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &t_start);
@@ -319,14 +312,13 @@ static long long getrtt(CURL *curl) {
 }
 
 static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
-  // "Force" clean timestamp
   *list = curl_slist_append(*list, "Cache-Control: no-cache");
 
   if (proxy)
     curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *list);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, getremotetime);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)remotetime);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, get_remote_time);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, remotetime);
   curl_easy_setopt(curl, CURLOPT_IPRESOLVE, ip_resolve);
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
@@ -357,7 +349,7 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   int ret = -1;
   double last_rtt = 0.0;
   double total_rtt = 0.0;
-  double min_rtt = 0.0, max_rtt = 0.0;   /* set after the first request */
+  double min_rtt = 0.0, max_rtt = 0.0;
   long long sec_offset = 0, first_offset = 0, prev_offset = 0;
   long long nap = NS_SEC;
   long long rtt_ns = 0;
@@ -377,54 +369,53 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   // Eliminate connection setup time (DNS, TCP, TLS) before the poll loop.
   res = curl_easy_perform(curl);
   if (res != CURLE_OK) {
-    printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
+    print_log(1, "failed: %s %s", url, curl_easy_strerror(res));
     goto cleanup;
   }
-  rtt_ns = getrtt(curl);
+  rtt_ns = get_rtt(curl);
   last_rtt = (double)rtt_ns * 1e-9;
   min_rtt = max_rtt = last_rtt;
 
   do {
     if (verbose > 1)
-      printlog(0, "bisect: %i, when: %09lli", polls, when);
+      print_log(0, "bisect: %i, when: %09lli", polls, when);
 
-    /* Wait till we reach the desired time, "when" - latency */
+    // Wait till we reach the desired time, "when" - latency
     target = (when - rtt_ns / 2) % NS_SEC;
     if (target < 0) target += NS_SEC;
 
-    /* Absolute wake time: next moment the wall clock reads "target" ns */
+    // Absolute wake time: next moment the wall clock reads "target" ns
     clock_gettime(CLOCK_REALTIME, &wake);
     if (wake.tv_nsec > target) wake.tv_sec++;
     wake.tv_nsec = target;
 
-    /* Local second in which the request reaches the server */
+    // Local second in which the request reaches the server
     time_t local_sec = wake.tv_sec + ((long long)wake.tv_nsec + rtt_ns / 2) / NS_SEC;
 
     while (clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &wake, NULL) == EINTR)
       ;
 
-    /* Send HEAD request */
     remotetime[0] = '\0';
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-      printlog(1, "failed: %s %s", url, curl_easy_strerror(res));
+      print_log(1, "failed: %s %s", url, curl_easy_strerror(res));
       goto cleanup;
     }
 
-    /* rtt_ns contains round trip time in nanoseconds */
-    rtt_ns = getrtt(curl);
+    // rtt_ns contains round trip time in nanoseconds
+    rtt_ns = get_rtt(curl);
     last_rtt = (double)rtt_ns * 1e-9;
     if (last_rtt < min_rtt) min_rtt = last_rtt;
     if (last_rtt > max_rtt) max_rtt = last_rtt;
 
     if (remotetime[0] == '\0') {
-      printlog(1, "%s no timestamp", url);
+      print_log(1, "%s no timestamp", url);
       goto cleanup;
     }
 
     sec_offset = offset_sec(remotetime, local_sec);
     if (sec_offset == LLONG_MAX) {
-      printlog(1, "%s unknown time format", url);
+      print_log(1, "%s unknown time format", url);
       goto cleanup;
     }
 
@@ -440,29 +431,28 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
     prev_offset = sec_offset;
 
     if (verbose > 1) {
-      printlog(0, "%-25s %s (%lld ms) => %lld", url, remotetime,
+      print_log(0, "%-25s %s (%lld ms) => %lld", url, remotetime,
         rtt_ns / 1000000L, sec_offset);
     }
 
     when += nap;
 
-    /* Stop if the RTT jitter exceeds the current bisection step size */
+    // Stop if the RTT jitter exceeds the current bisection step size
     double jitter = max_rtt - min_rtt;
     double step_size = (double)llabs(nap) / NS_SEC;
     if (jitter > step_size) {
       if (verbose > 1)
-        printlog(0, "%s RTT jitter %lld ms exceeds step size %lld ms",
+        print_log(0, "%s RTT jitter %lld ms exceeds step size %lld ms",
           url, to_ms(jitter), to_ms(step_size));
       break;
     }
   } while (polls < precision);
 
-  if (verbose > 1) printlog(0, "when: %lld, nap: %lld", when, nap);
+  if (verbose > 1) print_log(0, "when: %lld, nap: %lld", when, nap);
 
-  /* Rounding */
   *offset = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
 
-  /* Average RTT is only used to weight the servers in main() */
+  // Average RTT is only used to weight the servers in main()
   *rtt = total_rtt / polls;
 
   ret = 0;
@@ -476,54 +466,50 @@ cleanup:
 
 static int calculate_offset(struct timesample samples[], int valid_samples,
   double *out) {
-  double avgtime = 0.0;
-  double total_weight = 0;
-
+  // Two servers that disagree: trust the one with the lower RTT
   if (valid_samples == 2 && dabs(samples[0].offset - samples[1].offset) > 0.5) {
-    avgtime = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
-    total_weight = 1;
-  } else {
-    double tmp[MAX_URLS];
-    for (int j = 0; j < valid_samples; j++)
-       tmp[j] = samples[j].offset;
+    *out = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
+    return 0;
+  }
 
-    insertsort(tmp, valid_samples);
-    double median_offset = tmp[valid_samples / 2];
+  double tmp[MAX_URLS];
+  for (int j = 0; j < valid_samples; j++)
+    tmp[j] = samples[j].offset;
 
-    // Use Median Absolute Deviation (MAD) for outlier detection
-    for (int j = 0; j < valid_samples; j++)
-      tmp[j] = dabs(samples[j].offset - median_offset);
+  insert_sort(tmp, valid_samples);
+  double median_offset = tmp[valid_samples / 2];
 
-    insertsort(tmp, valid_samples);
-    double mad = tmp[valid_samples / 2];
+  // Use Median Absolute Deviation (MAD) for outlier detection
+  for (int j = 0; j < valid_samples; j++)
+    tmp[j] = dabs(samples[j].offset - median_offset);
 
-    double threshold = 3.0 * mad;
+  insert_sort(tmp, valid_samples);
+  double mad = tmp[valid_samples / 2];
 
-    double weighted_sum = 0;
+  // Drop samples more than 3 MADs away from the median
+  double threshold = 3.0 * mad;
 
-    for (int j = 0; j < valid_samples; j++) {
-      if (dabs(samples[j].offset - median_offset) > threshold) {
-        if (verbose)
-          printlog(0, "Dropping outlier: offset %lld ms from median",
-          to_ms(samples[j].offset));
-        continue;
-      }
+  double weighted_sum = 0.0;
+  double total_weight = 0.0;
 
-      // Inverse RTT weighted values
-      double weight = 1.0 / (samples[j].rtt + 0.001);
-      weighted_sum += samples[j].offset * weight;
-      total_weight += weight;
+  for (int j = 0; j < valid_samples; j++) {
+    if (dabs(samples[j].offset - median_offset) > threshold) {
+      if (verbose)
+        print_log(0, "%-25s | Dropping outlier: %lld ms from median",
+          samples[j].url, to_ms(samples[j].offset - median_offset));
+      continue;
     }
 
-    if (total_weight > 0) {
-      avgtime = weighted_sum / total_weight;
-    }
+    // Weight by inverse RTT; the 1 ms floor avoids division by zero
+    double weight = 1.0 / (samples[j].rtt + 0.001);
+    weighted_sum += samples[j].offset * weight;
+    total_weight += weight;
   }
 
   if (total_weight <= 0)
     return -1;
 
-  *out = avgtime;
+  *out = weighted_sum / total_weight;
   return 0;
 }
 
@@ -574,15 +560,14 @@ static int daemonize(void) {
 static int update_clock(double avgtime, int precision, int interval) {
   static time_t starttime = 0;
 
-  // Consensus offset, median-filtered and RTT-weighted
   if (verbose || run_mode == RUN_ONESHOT)
-    printlog(0, "Offset: %lld ms", to_ms(avgtime));
+    print_log(0, "Offset: %lld ms", to_ms(avgtime));
 
-  /* Consider +/- .5s a valid sync state */
+  // Consider +/- .5s a valid sync state
   if (sync_mode == SYNC_MODE_DRIFT && dabs(avgtime) < 0.5)
-    setstatus();
+    set_status();
 
-  /* Measurement resolution is +/- 1/2^precision seconds */
+  // Measurement resolution is +/- 1/2^precision seconds
   double threshold = 1.0 / (double)(1 << precision);
 
   if (dabs(avgtime) <= threshold) {
@@ -592,33 +577,33 @@ static int update_clock(double avgtime, int precision, int interval) {
     return interval;
   }
 
-  /* Avoid bouncing between upper/lower limit when (almost) in sync */
+  // Avoid bouncing between upper/lower limit when (almost) in sync
   if (dabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
 
-  /* Too large to slew (broken RTC, -t): step once, then back to normal */
+  // Too large to slew (broken RTC, -t): step once, then back to normal
   if (sync_mode != SYNC_MODE_NONE && dabs(avgtime) > MAX_OFFSET) {
-    if (setclock(avgtime) == 0)
+    if (set_clock(avgtime) == 0)
       sanity_mode = SANITY_CHECK_ENABLED;
     starttime = 0;
     return DEFAULT_MIN_SLEEP;
   }
 
-  if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
+  if (sync_mode == SYNC_MODE_SET) set_clock(avgtime);
   if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) {
-    if (adjustclock(avgtime) < 0)
-      printlog(1, "adjtime failed: %s", strerror(errno));
+    if (adjust_clock(avgtime) < 0)
+      print_log(1, "adjtime failed: %s", strerror(errno));
   }
 
   if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
     if (starttime) {
-      /* Calculate systematic clock drift */
+      // Calculate systematic clock drift
       double elapsed = (double)(time(NULL) - starttime);
       double drift = avgtime / elapsed;
-      printlog(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
+      print_log(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
 
-      /* Adjust the clock frequency, weighted by elapsed time */
+      // Adjust the clock frequency, weighted by elapsed time
       if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
-        printlog(1, "Frequency change failed");
+        print_log(1, "Frequency change failed");
     }
     starttime = time(NULL);
   }
@@ -708,13 +693,13 @@ int main(int argc, char *argv[]) {
   }
 
   if (argc - optind > MAX_URLS) {
-    printlog(1, "Too many URLs specified");
+    print_log(1, "Too many URLs specified");
     exit(1);
   }
 
   switch (run_mode) {
   case RUN_ONESHOT:
-    /* Run once without daemonizing or startup logging. */
+    // Run once without daemonizing or startup logging.
     break;
 
   case RUN_BACKGROUND:
@@ -725,11 +710,11 @@ int main(int argc, char *argv[]) {
       exit(1);
     }
 
-    printlog(0, "httpdate version "VERSION" started");
+    print_log(0, "httpdate version "VERSION" started");
     break;
 
   case RUN_FOREGROUND:
-    printlog(0, "httpdate version "VERSION" started");
+    print_log(0, "httpdate version "VERSION" started");
     break;
   }
 
@@ -750,11 +735,12 @@ int main(int argc, char *argv[]) {
 
       if (sanity_mode == SANITY_CHECK_ENABLED && dabs(offset) > MAX_OFFSET) {
         if (verbose)
-          printlog(0, "%-25s | Offset exceeds %ld days, ignored", argv[i], MAX_OFFSET / 86400L);
+          print_log(0, "%-25s | Offset exceeds %ld s, ignored", argv[i], MAX_OFFSET);
         continue;
       }
 
-      if (verbose) printlog(0, "%-25s | Offset: %lld ms | RTT: %lld ms", argv[i], to_ms(offset), to_ms(rtt));
+      if (verbose) print_log(0, "%-25s | Offset: %lld ms | RTT: %lld ms", argv[i], to_ms(offset), to_ms(rtt));
+      samples[valid_samples].url = argv[i];
       samples[valid_samples].offset = offset;
       samples[valid_samples].rtt = rtt;
       valid_samples++;
@@ -764,9 +750,9 @@ int main(int argc, char *argv[]) {
       if (calculate_offset(samples, valid_samples, &avgtime) == 0)
         have_time = 1;
       else
-        printlog(1, "No servers passed RTT quality and consensus filters");
+        print_log(1, "No servers passed RTT quality and consensus filters");
     } else {
-      printlog(1, "No suitable servers available");
+      print_log(1, "No suitable servers available");
     }
 
     if (have_time) {

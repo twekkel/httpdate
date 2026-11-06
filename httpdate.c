@@ -742,8 +742,8 @@ int main(int argc, char *argv[]) {
       exit(1);
     }
     if (pid == 0) {
-      // Child process: run NTP server
-      run_ntp_server((uint8_t)ntp_stratum, 0);
+      // Child process: run NTP server in foreground
+      run_ntp_server((uint8_t)ntp_stratum, 1);
       exit(0);
     }
     // Parent continues with httpdate

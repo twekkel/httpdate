@@ -43,8 +43,9 @@ static void handle_signal(int sig) {
 }
 
 // Convert Unix time to NTP timestamp format
+// Note: time_t may be signed 32-bit, so cast to uint64_t first to avoid overflow
 static uint64_t unix_to_ntp(time_t unix_time) {
-  return ((uint64_t)(unix_time + 2208988800UL)) << 32;
+  return ((uint64_t)unix_time + 2208988800ULL) << 32;
 }
 
 // Get current NTP timestamp

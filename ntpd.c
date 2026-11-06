@@ -53,7 +53,7 @@ static void handle_signal(int sig) {
 // Note: time_t may be signed 32-bit, so cast to uint64_t first to avoid overflow
 static uint64_t make_ntp_timestamp(time_t unix_time, uint32_t frac) {
   uint32_t seconds = (uint32_t)(unix_time + 2208988800ULL);
-  uint64_t timestamp = ((uint64_t)htonl(seconds) << 32) | htonl(frac);
+  uint64_t timestamp = ((uint64_t)seconds << 32) | frac;
   return htonll(timestamp);
 }
 

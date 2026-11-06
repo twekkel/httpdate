@@ -240,7 +240,7 @@ static int setclock(double timedelta) {
   int ret = clock_settime(CLOCK_REALTIME, &now);
 
   if (ret) {
-    printlog(1, "error setting time");
+    printlog(1, "error setting time: %s", strerror(errno));
   }
 
   return ret;
@@ -597,8 +597,8 @@ static int update_clock(double avgtime, int precision, int interval) {
 
   /* Too large to slew (broken RTC, -t): step once, then back to normal */
   if (sync_mode != SYNC_MODE_NONE && dabs(avgtime) > MAX_OFFSET) {
-    setclock(avgtime);
-    sanity_mode = SANITY_CHECK_ENABLED;
+    if (setclock(avgtime) == 0)
+      sanity_mode = SANITY_CHECK_ENABLED;
     starttime = 0;
     return DEFAULT_MIN_SLEEP;
   }

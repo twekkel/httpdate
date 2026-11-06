@@ -42,10 +42,11 @@ static void handle_signal(int sig) {
   running = 0;
 }
 
-// Convert Unix time to NTP timestamp format
+// Convert Unix time to NTP timestamp format (network byte order)
 // Note: time_t may be signed 32-bit, so cast to uint64_t first to avoid overflow
 static uint64_t unix_to_ntp(time_t unix_time) {
-  return ((uint64_t)unix_time + 2208988800ULL) << 32;
+  uint32_t seconds = (uint32_t)(unix_time + 2208988800ULL);
+  return ((uint64_t)htonl(seconds)) << 32;
 }
 
 // Get current NTP timestamp
@@ -144,13 +145,13 @@ static void handle_ntp_request(int sockfd, struct sockaddr_in *client_addr,
   
   // Set receive timestamp (T2 = when we received the request)
   response.rx_timestamp = unix_to_ntp(tv_recv.tv_sec);
-  uint64_t frac_recv = ((uint64_t)tv_recv.tv_usec * 4294967296ULL) / 1000000ULL;
-  response.rx_timestamp |= (frac_recv & 0xFFFFFFFFULL);
+  uint32_t frac_recv = (uint32_t)(((uint64_t)tv_recv.tv_usec * 4294967296ULL) / 1000000ULL);
+  response.rx_timestamp |= htonl(frac_recv);
   
   // Set transmit timestamp (T4 = when we send the response)
   response.tx_timestamp = unix_to_ntp(tv_xmit.tv_sec);
-  uint64_t frac_xmit = ((uint64_t)tv_xmit.tv_usec * 4294967296ULL) / 1000000ULL;
-  response.tx_timestamp |= (frac_xmit & 0xFFFFFFFFULL);
+  uint32_t frac_xmit = (uint32_t)(((uint64_t)tv_xmit.tv_usec * 4294967296ULL) / 1000000ULL);
+  response.tx_timestamp |= htonl(frac_xmit);
   
   // Reference timestamp (T3 = when we last synchronized, use current time for local clock)
   response.ref_timestamp = response.tx_timestamp;

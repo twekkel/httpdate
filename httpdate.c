@@ -54,7 +54,7 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 #define DEFAULT_PRECISION       3               /* 3  +/- 125 ms     */
 #define DRIFT_TAU               14400.0         /* 4-hour smoothing  */
 #define PRINTBUFFERSIZE         1024
-#define MAX_OFFSET              31536000L       /* 1 year in seconds */
+#define MAX_OFFSET              1000L
 #define MAX_PPM                 2
 #define MAX_URLS                16
 #define NS_SEC                  1000000000L
@@ -283,6 +283,7 @@ static int adjust_freq(double drift, float confidence) {
      Clamp in the double domain so the conversion to long cannot
      overflow (e.g. bogus server date combined with -t). */
   double freq_target = 65536e6 * drift * confidence;
+  if (freq_target != freq_target) return -1;
 
   /* Slew-rate limit: MAX_PPM change per call */
   double max_delta = (double)(MAX_PPM * 65536L);
@@ -543,10 +544,10 @@ static void show_help(void) {
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
          "  -s    set time\n"
-         "  -t    disable time sanity check (limit: %ld days)\n"
+         "  -t    disable time sanity check (limit: %ld s)\n"
          "  -v    show version\n"
          "  -x    adjust time and clock frequency (drift, use with -D)\n",
-         DEFAULT_PRECISION, MAX_OFFSET / 86400L);
+         DEFAULT_PRECISION, MAX_OFFSET);
 }
 
 static int daemonize(void) {
@@ -595,6 +596,14 @@ static int update_clock(double avgtime, int precision, int interval) {
 
   /* Avoid bouncing between upper/lower limit when (almost) in sync */
   if (dabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
+
+  /* Too large to slew (broken RTC, -t): step once, then back to normal */
+  if (sync_mode != SYNC_MODE_NONE && dabs(avgtime) > MAX_OFFSET) {
+    setclock(avgtime);
+    sanity_mode = SANITY_CHECK_ENABLED;
+    starttime = 0;
+    return DEFAULT_MIN_SLEEP;
+  }
 
   if (sync_mode == SYNC_MODE_SET) setclock(avgtime);
   if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) adjustclock(avgtime);

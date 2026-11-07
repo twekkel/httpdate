@@ -10,4 +10,4 @@
 // parent process can detect startup failures. Pass a negative fd to disable.
 int run_ntp_server(int foreground, int ready_fd);
 
-#endif // NTPD_H
+#endif

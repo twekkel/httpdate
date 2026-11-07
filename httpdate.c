@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: 1c308e7d658a68b07c40617e2410937919b311fc)#define _DEFAULT_SOURCE
 
 #include <curl/curl.h>
 #if LIBCURL_VERSION_NUM < 0x073d00
@@ -778,15 +778,34 @@ int main(int argc, char *argv[]) {
 
   // Start NTP server if -S option was specified
   if (ntp_server) {
+    int ready[2];
+    if (pipe(ready) < 0) {
+      perror("Failed to create pipe for NTP server");
+      exit(1);
+    }
     pid_t pid = fork();
     if (pid < 0) {
       perror("Failed to fork for NTP server");
       exit(1);
     }
     if (pid == 0) {
-      exit(run_ntp_server(1));
+      // Child process: run NTP server in foreground
+      close(ready[0]);
+      exit(run_ntp_server(1, ready[1]));
     }
-    // Parent continues with httpdate
+    // Parent: wait for the NTP server to report that it is listening
+    close(ready[1]);
+    char ready_byte;
+    ssize_t nread;
+    do {
+      nread = read(ready[0], &ready_byte, 1);
+    } while (nread < 0 && errno == EINTR);
+    close(ready[0]);
+    if (nread != 1) {
+      print_log(1, "NTP server failed to start");
+      curl_global_cleanup();
+      exit(1);
+    }
     print_log(0, "NTP server started");
   }
 

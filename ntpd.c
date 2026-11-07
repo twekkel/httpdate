@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: 87dfd71de44b7f2407f8f826d85f1a43958de2a2)#define _DEFAULT_SOURCE
 
 #include "ntpd.h"
 
@@ -159,7 +159,7 @@ static void handle_ntp_request(int sockfd, const struct ntp_packet *request,
   }
 }
 
-int run_ntp_server(int foreground) {
+int run_ntp_server(int foreground, int ready_fd) {
   running = 1;
 
   int sockfd = create_ntp_socket();
@@ -194,6 +194,12 @@ int run_ntp_server(int foreground) {
       if (fd > STDERR_FILENO)
         close(fd);
     }
+  }
+
+  // Report readiness to the parent process, so it can fail on startup errors
+  if (ready_fd >= 0) {
+    (void)!write(ready_fd, "1", 1);
+    close(ready_fd);
   }
 
   struct sigaction sa;

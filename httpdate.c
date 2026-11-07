@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: f5e6436593642d8552c079f3445c52e8867b0042)#define _DEFAULT_SOURCE
 
 #include <curl/curl.h>
 #if LIBCURL_VERSION_NUM < 0x073d00
@@ -562,7 +562,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnStvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-acdDFhnSstvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"

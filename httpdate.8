@@ -3,7 +3,7 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-46acdDFhnStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
+[\-46acdDFhnSstvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
@@ -108,4 +108,3 @@ Eddy Vervest
 .BR timed (8),
 .BR adjtime (3),
 .BR systemd (1)
-

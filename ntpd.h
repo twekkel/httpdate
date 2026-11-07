@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: b799ad124cc828f5eb6eee4979644cd5b6318694)#ifndef NTPD_H
+#ifndef NTPD_H
 #define NTPD_H
 
 #include <signal.h>

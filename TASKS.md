@@ -8,8 +8,8 @@ Door meerdere HTTP(S)-requests rond een secondewisseling uit te voeren, kan de s
 
 ## 1. Historie mee laten wegen
 
-- Bewaar per URL de laatste 8 samples, waaronder offset en jitter, om de kwaliteit van de URL te bepalen.
-- Gebruik deze historie voor betere tijdsynchronisatie.
+v Bewaar per URL de laatste 8 samples, waaronder offset en jitter, om de kwaliteit van de URL te bepalen.
+v Gebruik deze historie voor betere tijdsynchronisatie.
 
 ## 2. Minimale NTP-server
 
@@ -20,8 +20,8 @@ v Start de server met de optie `-S <1..9>`.
   v De optionele waarde `<1..9>` bepaalt het stratum.
 v Integreer de server met `httpdate.c`.
 v Pas de `Makefile` aan.
-- Wijzigingen:
-  - stratum is fixed 5
-  - "-S" optie zonder argumenten, start alleen als ook -D of -F zijn gezet
-- Update README en man page (httpdate.8)
-- maak het productie kwaliteit
+v Wijzigingen:
+  v stratum is fixed 5
+  v `-S` optie zonder argumenten, start alleen als ook `-D` of `-F` zijn gezet
+v Update README en man page (httpdate.8)
+v Maak het productiekwaliteit

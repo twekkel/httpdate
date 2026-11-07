@@ -3,7 +3,7 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-46acdDFhnstvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
+[\-46acdDFhnStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
@@ -47,6 +47,9 @@ Number of steps per server, from 1 to 9 (default 3). Each step halves the uncert
 .BI \-P " proxy"
 Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Overrides the proxy environment variables.
 .TP
+.B \-S
+Run a minimal NTP server on UDP port 123 that serves the synchronized local time to NTP clients (stratum 5). Only valid in daemon mode (see \fB\-D\fR and \fB\-F\fR), because the NTP server needs a continuously synchronized clock. Binding port 123 requires root or the \fICAP_NET_BIND_SERVICE\fR capability.
+.TP
 .B \-s
 Set (step) the clock immediately. Offsets are applied in full, also when smaller than one second. Not recommended together with \fB\-D\fR.
 .TP
@@ -88,6 +91,10 @@ Run as daemon in the foreground with drift correction (e.g. for systemd):
 .br
 \&    httpdate \-F \-x https://www.example.com
 .P
+Run as daemon in the foreground and serve time to NTP clients:
+.br
+\&    httpdate \-F \-S https://www.example.com
+.P
 Use a proxy server:
 .br
 \&    httpdate \-P proxy.example.com:3128 https://www.example.com
@@ -101,3 +108,4 @@ Eddy Vervest
 .BR timed (8),
 .BR adjtime (3),
 .BR systemd (1)
+

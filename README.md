@@ -140,6 +140,7 @@ For example, a daily time synchronization,
 | `-h` | Display help. |
 | `-p precision` | Set precision from 1 to 9; default is 3. |
 | `-P proxy` | Use an HTTP proxy, for example `http://proxy:port`, `http://username:password@proxy:port`, or `host:port`. |
+| `-S` | Run a minimal NTP server (stratum 5, UDP port 123); requires `-D` or `-F`. |
 | `-s` | Set the system time immediately. |
 | `-t` | Disable time sanity check, default limit is 1000 s. |
 | `-v` | Display version information. |
@@ -157,6 +158,9 @@ sudo httpdate -s http://example.com
 # Run continuously in the foreground with drift correction
 httpdate -Fx -p8 https://example.com
 
+# Also serve time to NTP clients on the local network
+sudo httpdate -FS https://example.com https://example.net
+
 # Run through a proxy server
 httpdate -P 'http://username:password@proxy.example.net:8080' \
          https://www.example.com
@@ -170,6 +174,10 @@ The program also honors libcurl's standard proxy environment variables, includin
 
 If the username or password contains reserved URI characters such as `@`, `:`, `/`, or `#`, they should be URL-encoded.
 
+## NTP server
+
+With `-S`, httpdate runs a minimal NTP server that serves the synchronized local time to NTP clients on UDP port 123 (stratum 5). This is useful on networks where NTP is blocked upstream: httpdate synchronizes over HTTP(S), and local clients can sync from it via NTP. The option is only available in daemon mode (`-D` or `-F`), since the NTP server needs a continuously synchronized clock. Binding port 123 requires root or the `CAP_NET_BIND_SERVICE` capability.
+
 ## Troubleshooting
 
 - **The service cannot adjust the clock:** confirm that the unit grants `CAP_SYS_TIME` and inspect `journalctl -u httpdate.service`.
@@ -181,3 +189,4 @@ If the username or password contains reserved URI characters such as `@`, `:`, `
 ## License
 
 `httpdate` is licensed under the GPL-2.0-or-later, the same license as its predecessor `htpdate`. See [LICENSE](LICENSE) for details.
+

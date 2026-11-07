@@ -99,12 +99,23 @@ static enum sync_mode sync_mode = SYNC_MODE_NONE;
 static const char *proxy = NULL;
 static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
-static int ntp_stratum   = 0; // 0 = disabled, 1-9 = stratum level
+static int ntp_server    = 0; // 0 = disabled, 1 = run NTP server (stratum 5)
+
+#define HISTORY_SIZE 8
 
 struct timesample {
   const char *url;
   double offset;
   double rtt;
+  double jitter; // Historical jitter of this URL, 0.0 when unknown
+};
+
+/* Per-URL history of the most recent offsets, used to estimate the
+   quality (jitter) of each server. */
+struct url_stats {
+  double offsets[HISTORY_SIZE];
+  int count;
+  int next;
 };
 
 static int num(const char *p, int n) {
@@ -179,6 +190,32 @@ static double dabs(double x) {
 // Seconds -> rounded milliseconds
 static long long to_ms(double sec) {
   return (long long)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
+}
+
+/* Record a new offset sample for a URL and return the jitter of that URL,
+   based on the most recent HISTORY_SIZE samples. The jitter is the median
+   absolute deviation (MAD) of the stored offsets. Returns 0.0 when fewer
+   than two samples are known. */
+static double record_sample(struct url_stats *stats, double offset) {
+  stats->offsets[stats->next] = offset;
+  stats->next = (stats->next + 1) % HISTORY_SIZE;
+  if (stats->count < HISTORY_SIZE) stats->count++;
+
+  if (stats->count < 2)
+    return 0.0;
+
+  double tmp[HISTORY_SIZE];
+  for (int i = 0; i < stats->count; i++)
+    tmp[i] = stats->offsets[i];
+
+  insert_sort(tmp, stats->count);
+  double median = tmp[stats->count / 2];
+
+  for (int i = 0; i < stats->count; i++)
+    tmp[i] = dabs(stats->offsets[i] - median);
+
+  insert_sort(tmp, stats->count);
+  return tmp[stats->count / 2];
 }
 
 static void print_log(int is_error, char *format, ...) {
@@ -472,9 +509,11 @@ cleanup:
 
 static int calculate_offset(struct timesample samples[], int valid_samples,
   double *out) {
-  // Two servers that disagree: trust the one with the lower RTT
+  // Two servers that disagree: trust the one with the lowest RTT + jitter
   if (valid_samples == 2 && dabs(samples[0].offset - samples[1].offset) > 0.5) {
-    *out = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
+    double q0 = samples[0].rtt + samples[0].jitter;
+    double q1 = samples[1].rtt + samples[1].jitter;
+    *out = (q0 < q1) ? samples[0].offset : samples[1].offset;
     return 0;
   }
 
@@ -506,8 +545,10 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
       continue;
     }
 
-    // Weight by inverse RTT; the 1 ms floor avoids division by zero
-    double weight = 1.0 / (samples[j].rtt + 0.001);
+    // Weight by inverse RTT + historical jitter; the 1 ms floor avoids
+    // division by zero. Servers that are consistently noisy get a lower
+    // weight than fast, stable ones.
+    double weight = 1.0 / (samples[j].rtt + samples[j].jitter + 0.001);
     weighted_sum += samples[j].offset * weight;
     total_weight += weight;
   }
@@ -521,7 +562,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnstvx] [-p #] [-P proxy] [-S stratum] <URLs> ...\n\n"
+         "Usage: httpdate [-acdDFhnStvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
@@ -533,7 +574,7 @@ static void show_help(void) {
          "  -n    ignore proxy environment variables\n"
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
-         "  -S    start NTP server with stratum (1..9)\n"
+         "  -S    run a minimal NTP server (stratum 5), requires -D or -F\n"
          "  -s    set time\n"
          "  -t    disable time sanity check (limit: %ld s)\n"
          "  -v    show version\n"
@@ -632,7 +673,7 @@ int main(int argc, char *argv[]) {
   int       precision  = DEFAULT_PRECISION;
 
   int       param;
-  while ((param = getopt(argc, argv, "46acdhDFnp:P:S:stvx")) != -1)
+  while ((param = getopt(argc, argv, "46acdhDFnp:P:Sstvx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -676,11 +717,7 @@ int main(int argc, char *argv[]) {
         proxy = optarg;
         break;
       case 'S':
-        ntp_stratum = atoi(optarg);
-        if (ntp_stratum < 1 || ntp_stratum > 9) {
-          fprintf(stderr, "Error: stratum must be between 1 and 9\n");
-          exit(1);
-        }
+        ntp_server = 1;
         break;
       case 's':
         sync_mode = SYNC_MODE_SET;
@@ -703,6 +740,11 @@ int main(int argc, char *argv[]) {
 
   if (argv[optind] == NULL) {
     show_help();
+    exit(1);
+  }
+
+  if (ntp_server && run_mode == RUN_ONESHOT) {
+    fprintf(stderr, "Error: -S is only valid in daemon mode (-D or -F)\n");
     exit(1);
   }
 
@@ -735,7 +777,7 @@ int main(int argc, char *argv[]) {
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
   // Start NTP server if -S option was specified
-  if (ntp_stratum > 0) {
+  if (ntp_server) {
     pid_t pid = fork();
     if (pid < 0) {
       perror("Failed to fork for NTP server");
@@ -743,12 +785,15 @@ int main(int argc, char *argv[]) {
     }
     if (pid == 0) {
       // Child process: run NTP server in foreground
-      run_ntp_server((uint8_t)ntp_stratum, 1);
+      run_ntp_server(5, 1);
       exit(0);
     }
     // Parent continues with httpdate
-    print_log(0, "NTP server started with stratum %d", ntp_stratum);
+    print_log(0, "NTP server started on port 123, stratum 5");
   }
+
+  // Per-URL offset history, kept across iterations to track server quality
+  struct url_stats stats[MAX_URLS] = {0};
 
   do {
     struct timesample samples[MAX_URLS] = {0};
@@ -769,10 +814,15 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      if (verbose) print_log(0, "%-25s | Offset: %lld ms | RTT: %lld ms", argv[i], to_ms(offset), to_ms(rtt));
+      // Record the sample and get the URL's historical jitter
+      double jitter = record_sample(&stats[i - optind], offset);
+
+      if (verbose) print_log(0, "%-25s | Offset: %lld ms | RTT: %lld ms | Jitter: %lld ms",
+                              argv[i], to_ms(offset), to_ms(rtt), to_ms(jitter));
       samples[valid_samples].url = argv[i];
       samples[valid_samples].offset = offset;
       samples[valid_samples].rtt = rtt;
+      samples[valid_samples].jitter = jitter;
       valid_samples++;
     }
 
@@ -801,3 +851,4 @@ int main(int argc, char *argv[]) {
   curl_global_cleanup();
   return 0;
 }
+

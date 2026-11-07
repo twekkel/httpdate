@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 712f1855c2c29a9401a2eee628fc5f5087e01eee)#ifndef NTPD_H
+#ifndef NTPD_H
 #define NTPD_H
 
 #include <stdint.h>

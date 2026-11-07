@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: bad31f46fa99bb2180342ad1586148406f3449c5)#define _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <curl/curl.h>
 #if LIBCURL_VERSION_NUM < 0x073d00

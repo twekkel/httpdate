@@ -25,3 +25,4 @@ v Wijzigingen:
   v `-S` optie zonder argumenten, start alleen als ook `-D` of `-F` zijn gezet
 v Update README en man page (httpdate.8)
 v Maak het productiekwaliteit
+- Update 'systemd integration' in README.md, allow bind poort 123

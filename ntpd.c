@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 
 #include "ntpd.h"
+#include "log.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -12,16 +13,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
-#define NTP_EPOCH_OFFSET        2208988800ULL
+#define NTP_EPOCH_OFFSET        2208988800ULL    // 1900-01-01, seconds before 1970
 #define NTP_PACKET_SIZE         48
 #define NTP_PORT                123
 #define NTP_STRATUM             5
 #define NTP_VERSION             4
+#define NTP_MODE_CLIENT         3
+#define NTP_MODE_SERVER         4
+#define NTP_POLL                6               // 2^6  64 s, conventional poll interval
+#define NTP_PRECISION           -6              // 2^-6  ~15.6 us
+#define NTP_REFID_LOCL          0x4C4F434C      // "LOCL", local clock reference
 
 // NTP packet, as defined by RFC 5905
 struct ntp_packet {
@@ -64,20 +69,20 @@ static void timespec_to_ntp(const struct timespec *ts, uint32_t *sec, uint32_t *
 static int create_ntp_socket(void) {
   int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (sockfd < 0) {
-    perror("socket");
+    print_log(1, "socket: %s", strerror(errno));
     return -1;
   }
 
   int opt = 1;
   if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    perror("setsockopt SO_REUSEADDR");
+    print_log(1, "setsockopt SO_REUSEADDR: %s", strerror(errno));
     close(sockfd);
     return -1;
   }
 
 #ifdef SO_REUSEPORT
   if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
-    perror("setsockopt SO_REUSEPORT");
+    print_log(1, "setsockopt SO_REUSEPORT: %s", strerror(errno));
     close(sockfd);
     return -1;
   }
@@ -90,7 +95,7 @@ static int create_ntp_socket(void) {
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("bind");
+    print_log(1, "bind: %s", strerror(errno));
     close(sockfd);
     return -1;
   }
@@ -107,12 +112,13 @@ static void handle_ntp_request(
   unsigned int version = (request->li_vn_mode >> 3) & 0x07;
   unsigned int mode = request->li_vn_mode & 0x07;
 
-  if (mode != 3 || (version != 3 && version != 4))
+  // Answer NTPv3 and v4 client requests; ignore everything else
+  if (mode != NTP_MODE_CLIENT || (version != 3 && version != 4))
     return;
 
   struct timespec ts_xmit;
   if (clock_gettime(CLOCK_REALTIME, &ts_xmit) < 0) {
-    perror("clock_gettime");
+    print_log(1, "clock_gettime: %s", strerror(errno));
     return;
   }
 
@@ -120,16 +126,16 @@ static void handle_ntp_request(
   memset(&response, 0, sizeof(response));
 
   /* LI=0 (no warning), VN=4, Mode=4 (server). */
-  response.li_vn_mode = (uint8_t)((NTP_VERSION << 3) | 4);
+  response.li_vn_mode = (uint8_t)((NTP_VERSION << 3) | NTP_MODE_SERVER);
   response.stratum = NTP_STRATUM;
-  response.poll = 6;
-  response.precision = -6;
+  response.poll = NTP_POLL;
+  response.precision = NTP_PRECISION;
 
   /* A local-clock reference. These values do not imply synchronization
    * to an external source. */
   response.root_delay = htonl(0);
   response.root_dispersion = htonl(0);
-  response.ref_id = htonl(0x4C4F434C); /* "LOCL" */
+  response.ref_id = htonl(NTP_REFID_LOCL);
 
   uint32_t ref_sec, ref_frac;
   timespec_to_ntp(&ts_xmit, &ref_sec, &ref_frac);
@@ -152,9 +158,9 @@ static void handle_ntp_request(
 
   ssize_t sent = sendto(sockfd, &response, sizeof(response), 0, (const struct sockaddr *)client_addr, client_len);
   if (sent < 0) {
-    perror("sendto");
+    print_log(1, "sendto: %s", strerror(errno));
   } else if ((size_t)sent != sizeof(response)) {
-    fprintf(stderr, "sendto: incomplete NTP response\n");
+    print_log(1, "sendto: incomplete NTP response");
   }
 }
 
@@ -163,14 +169,14 @@ int run_ntp_server(int foreground, int ready_fd) {
 
   int sockfd = create_ntp_socket();
   if (sockfd < 0) {
-    fprintf(stderr, "Failed to create NTP server socket\n");
+    print_log(1, "Failed to create NTP server socket");
     return -1;
   }
 
   if (!foreground) {
     pid_t pid = fork();
     if (pid < 0) {
-      perror("fork");
+      print_log(1, "fork: %s", strerror(errno));
       close(sockfd);
       return -1;
     }
@@ -180,7 +186,7 @@ int run_ntp_server(int foreground, int ready_fd) {
     }
 
     if (setsid() < 0) {
-      perror("setsid");
+      print_log(1, "setsid: %s", strerror(errno));
       close(sockfd);
       _exit(EXIT_FAILURE);
     }
@@ -197,7 +203,8 @@ int run_ntp_server(int foreground, int ready_fd) {
 
   // Report readiness to the parent process, so it can fail on startup errors
   if (ready_fd >= 0) {
-    (void)!write(ready_fd, "1", 1);
+    if (write(ready_fd, "1", 1) < 0)
+      print_log(1, "write ready byte: %s", strerror(errno));
     close(ready_fd);
   }
 
@@ -209,8 +216,8 @@ int run_ntp_server(int foreground, int ready_fd) {
   sigaction(SIGTERM, &sa, NULL);
   sigaction(SIGQUIT, &sa, NULL);
 
-  fprintf(stderr, "NTP server started on UDP port %d, stratum %u\n",
-          NTP_PORT, NTP_STRATUM);
+  print_log(0, "NTP server started on UDP port %d, stratum %u",
+            NTP_PORT, NTP_STRATUM);
 
   while (running) {
     // Leave room for NTP extension fields; only the first 48 bytes are
@@ -225,13 +232,13 @@ int run_ntp_server(int foreground, int ready_fd) {
         continue;
       if (!running)
         break;
-      perror("recvfrom");
+      print_log(1, "recvfrom: %s", strerror(errno));
       continue;
     }
 
     struct timespec ts_recv;
     if (clock_gettime(CLOCK_REALTIME, &ts_recv) < 0) {
-      perror("clock_gettime");
+      print_log(1, "clock_gettime: %s", strerror(errno));
       continue;
     }
 
@@ -245,6 +252,7 @@ int run_ntp_server(int foreground, int ready_fd) {
   }
 
   close(sockfd);
-  fprintf(stderr, "NTP server stopped\n");
+  print_log(0, "NTP server stopped");
   return 0;
 }
+

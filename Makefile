@@ -9,8 +9,8 @@ MANDIR ?= $(PREFIX)/share/man
 
 all: httpdate
 
-httpdate: httpdate.o ntpd.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ httpdate.o ntpd.o $(LIBS)
+httpdate: httpdate.o ntpd.o log.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ httpdate.o ntpd.o log.o $(LIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -32,3 +32,4 @@ clean:
 	rm -f httpdate *.o
 
 .PHONY: all clean install test uninstall
+

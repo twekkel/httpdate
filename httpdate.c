@@ -5,15 +5,17 @@
 #error "httpdate needs libcurl 7.61.0 or newer"
 #endif
 #include "ntpd.h"
+#include "log.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <stdarg.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
@@ -54,7 +56,6 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 #define DEFAULT_MAX_SLEEP       14              // 2^14  ~4.5 hours
 #define DEFAULT_PRECISION       3               // 3  +/- 125 ms
 #define DRIFT_TAU               14400.0         // 4-hour smoothing
-#define PRINTBUFFERSIZE         1024
 #define MAX_OFFSET              1000L
 #define MAX_PPM                 2
 #define MAX_URLS                8
@@ -65,11 +66,6 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 enum cert_mode {
   CERT_CHECK_ENABLED,
   CERT_CHECK_DISABLED
-};
-
-enum log_dest {
-  LOG_DEST_CONSOLE,
-  LOG_DEST_SYSLOG
 };
 
 enum run_mode {
@@ -91,13 +87,13 @@ enum sync_mode {
 };
 
 static enum cert_mode cert_mode = CERT_CHECK_ENABLED;
-static enum log_dest log_dest = LOG_DEST_CONSOLE;
 static enum run_mode run_mode = RUN_ONESHOT;
 static enum sanity_mode sanity_mode = SANITY_CHECK_ENABLED;
 static enum sync_mode sync_mode = SYNC_MODE_NONE;
 
 static const char *proxy = NULL;
 static int verbose       = 0;
+static pid_t ntp_pid     = -1;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
 static int ntp_server    = 0;
 
@@ -216,28 +212,6 @@ static double record_sample(struct url_stats *stats, double offset) {
 
   insert_sort(tmp, stats->count);
   return tmp[stats->count / 2];
-}
-
-static void print_log(int is_error, char *format, ...) {
-  va_list args;
-  char buf[PRINTBUFFERSIZE];
-
-  va_start(args, format);
-  (void) vsnprintf(buf, sizeof(buf), format, args);
-  va_end(args);
-
-  switch(log_dest) {
-    case LOG_DEST_CONSOLE:
-      fprintf(is_error ? stderr : stdout, "%s\n", buf);
-      fflush(is_error ? stderr : stdout);
-      break;
-    case LOG_DEST_SYSLOG:
-      syslog(is_error ? LOG_WARNING : LOG_INFO, "%s", buf);
-      break;
-    default:
-      fprintf(stderr, "%s\n", "Invalid logmode, aborting");
-      abort();
-    }
 }
 
 static size_t get_remote_time(void *contents, size_t size,
@@ -582,6 +556,30 @@ static void show_help(void) {
          DEFAULT_PRECISION, MAX_OFFSET);
 }
 
+// Stop the NTP server child, so it does not outlive this process
+static void stop_ntp_server(void) {
+  if (ntp_pid > 0) {
+    kill(ntp_pid, SIGTERM);
+    // Wait until the child is gone, so UDP port 123 is free again
+    while (waitpid(ntp_pid, NULL, 0) < 0 && errno == EINTR);
+    ntp_pid = -1;
+  }
+}
+
+// On a termination signal, stop the NTP server child and take the default action
+static void handle_signal(int sig) {
+  stop_ntp_server();
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+// Reap the NTP server child when it exits before this process
+static void handle_sigchld(int sig) {
+  (void)sig;
+  while (waitpid(-1, NULL, WNOHANG) > 0);
+  ntp_pid = -1;
+}
+
 static int daemonize(void) {
   pid_t pid = fork();
 
@@ -692,12 +690,12 @@ int main(int argc, char *argv[]) {
         break;
       case 'D':
         run_mode = RUN_BACKGROUND;
-        log_dest = LOG_DEST_SYSLOG;
+        set_log_dest(LOG_DEST_SYSLOG);
         if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'F':
         run_mode = RUN_FOREGROUND;
-        log_dest = LOG_DEST_CONSOLE;
+        set_log_dest(LOG_DEST_CONSOLE);
         if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'h':
@@ -806,6 +804,19 @@ int main(int argc, char *argv[]) {
       curl_global_cleanup();
       exit(1);
     }
+    ntp_pid = pid;
+
+    // Stop the NTP server on termination, and reap it when it exits first
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+    sa.sa_handler = handle_sigchld;
+    sigaction(SIGCHLD, &sa, NULL);
+
     print_log(0, "NTP server started");
   }
 
@@ -868,4 +879,5 @@ int main(int argc, char *argv[]) {
   curl_global_cleanup();
   return 0;
 }
+
 

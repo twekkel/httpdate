@@ -1,7 +1,6 @@
 #ifndef NTPD_H
 #define NTPD_H
 
-#include <signal.h>
 #include <stdint.h>
 
 // Run NTP server
@@ -11,3 +10,4 @@
 int run_ntp_server(int foreground, int ready_fd);
 
 #endif
+

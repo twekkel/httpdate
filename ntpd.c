@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: 6bb31923ee1e52c6485727ea9b5e1b5f95f78717)#define _DEFAULT_SOURCE
 
 #include "ntpd.h"
 #include "log.h"
@@ -164,41 +164,13 @@ static void handle_ntp_request(
   }
 }
 
-int run_ntp_server(int foreground, int ready_fd) {
+int run_ntp_server(int ready_fd) {
   running = 1;
 
   int sockfd = create_ntp_socket();
   if (sockfd < 0) {
     print_log(1, "Failed to create NTP server socket");
     return -1;
-  }
-
-  if (!foreground) {
-    pid_t pid = fork();
-    if (pid < 0) {
-      print_log(1, "fork: %s", strerror(errno));
-      close(sockfd);
-      return -1;
-    }
-    if (pid > 0) {
-      close(sockfd);
-      return 0;
-    }
-
-    if (setsid() < 0) {
-      print_log(1, "setsid: %s", strerror(errno));
-      close(sockfd);
-      _exit(EXIT_FAILURE);
-    }
-
-    int fd = open("/dev/null", O_RDWR);
-    if (fd >= 0) {
-      (void)dup2(fd, STDIN_FILENO);
-      (void)dup2(fd, STDOUT_FILENO);
-      (void)dup2(fd, STDERR_FILENO);
-      if (fd > STDERR_FILENO)
-        close(fd);
-    }
   }
 
   // Report readiness to the parent process, so it can fail on startup errors

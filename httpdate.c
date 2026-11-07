@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: bad31f46fa99bb2180342ad1586148406f3449c5)#define _DEFAULT_SOURCE
 
 #include <curl/curl.h>
 #if LIBCURL_VERSION_NUM < 0x073d00
@@ -760,7 +760,7 @@ int main(int argc, char *argv[]) {
     openlog("httpdate", LOG_PID | LOG_CONS, LOG_DAEMON);
 
     if (daemonize() < 0) {
-      perror("daemon initialization failed");
+      print_log(1, "Daemon initialization failed: %s", strerror(errno));
       exit(1);
     }
 
@@ -778,18 +778,18 @@ int main(int argc, char *argv[]) {
   if (ntp_server) {
     int ready[2];
     if (pipe(ready) < 0) {
-      perror("Failed to create pipe for NTP server");
+      print_log(1, "Failed to create pipe for NTP server: %s", strerror(errno));
       exit(1);
     }
     pid_t pid = fork();
     if (pid < 0) {
-      perror("Failed to fork for NTP server");
+      print_log(1, "Failed to fork for NTP server: %s", strerror(errno));
       exit(1);
     }
     if (pid == 0) {
       // Child process: run NTP server in foreground
       close(ready[0]);
-      exit(run_ntp_server(1, ready[1]));
+      exit(run_ntp_server(ready[1]));
     }
     // Parent: wait for the NTP server to report that it is listening
     close(ready[1]);

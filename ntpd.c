@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: 25637af38da34167575449c2e5218f55f5426319)#define _DEFAULT_SOURCE
 
 #include "ntpd.h"
 
@@ -52,13 +52,13 @@ static void handle_signal(int sig) {
   running = 0;
 }
 
-static uint32_t usec_to_ntp_frac(suseconds_t usec) {
-  return (uint32_t)(((uint64_t)usec << 32) / 1000000ULL);
+static uint32_t nsec_to_ntp_frac(long nsec) {
+  return (uint32_t)(((uint64_t)nsec << 32) / 1000000000ULL);
 }
 
-static void timeval_to_ntp(const struct timeval *tv, uint32_t *sec, uint32_t *frac) {
-  *sec = (uint32_t)((uint64_t)tv->tv_sec + NTP_EPOCH_OFFSET);
-  *frac = usec_to_ntp_frac(tv->tv_usec);
+static void timespec_to_ntp(const struct timespec *ts, uint32_t *sec, uint32_t *frac) {
+  *sec = (uint32_t)((uint64_t)ts->tv_sec + NTP_EPOCH_OFFSET);
+  *frac = nsec_to_ntp_frac(ts->tv_nsec);
 }
 
 static int create_ntp_socket(void) {
@@ -103,16 +103,16 @@ static int create_ntp_socket(void) {
 static void handle_ntp_request(
     int sockfd, const struct ntp_packet *request,
     const struct sockaddr_in *client_addr, socklen_t client_len,
-    const struct timeval *tv_recv) {
+    const struct timespec *ts_recv) {
   unsigned int version = (request->li_vn_mode >> 3) & 0x07;
   unsigned int mode = request->li_vn_mode & 0x07;
 
   if (mode != 3 || (version != 3 && version != 4))
     return;
 
-  struct timeval tv_xmit;
-  if (gettimeofday(&tv_xmit, NULL) < 0) {
-    perror("gettimeofday");
+  struct timespec ts_xmit;
+  if (clock_gettime(CLOCK_REALTIME, &ts_xmit) < 0) {
+    perror("clock_gettime");
     return;
   }
 
@@ -132,7 +132,7 @@ static void handle_ntp_request(
   response.ref_id = htonl(0x4C4F434C); /* "LOCL" */
 
   uint32_t ref_sec, ref_frac;
-  timeval_to_ntp(&tv_xmit, &ref_sec, &ref_frac);
+  timespec_to_ntp(&ts_xmit, &ref_sec, &ref_frac);
   response.ref_timestamp_sec = htonl(ref_sec);
   response.ref_timestamp_frac = htonl(ref_frac);
 
@@ -141,12 +141,12 @@ static void handle_ntp_request(
   response.orig_timestamp_frac = request->tx_timestamp_frac;
 
   uint32_t rx_sec, rx_frac;
-  timeval_to_ntp(tv_recv, &rx_sec, &rx_frac);
+  timespec_to_ntp(ts_recv, &rx_sec, &rx_frac);
   response.rx_timestamp_sec = htonl(rx_sec);
   response.rx_timestamp_frac = htonl(rx_frac);
 
   uint32_t tx_sec, tx_frac;
-  timeval_to_ntp(&tv_xmit, &tx_sec, &tx_frac);
+  timespec_to_ntp(&ts_xmit, &tx_sec, &tx_frac);
   response.tx_timestamp_sec = htonl(tx_sec);
   response.tx_timestamp_frac = htonl(tx_frac);
 
@@ -229,9 +229,9 @@ int run_ntp_server(int foreground, int ready_fd) {
       continue;
     }
 
-    struct timeval tv_recv;
-    if (gettimeofday(&tv_recv, NULL) < 0) {
-      perror("gettimeofday");
+    struct timespec ts_recv;
+    if (clock_gettime(CLOCK_REALTIME, &ts_recv) < 0) {
+      perror("clock_gettime");
       continue;
     }
 
@@ -241,7 +241,7 @@ int run_ntp_server(int foreground, int ready_fd) {
     struct ntp_packet request;
     memcpy(&request, buf, sizeof(request));
 
-    handle_ntp_request(sockfd, &request, &client_addr, client_len, &tv_recv);
+    handle_ntp_request(sockfd, &request, &client_addr, client_len, &ts_recv);
   }
 
   close(sockfd);

@@ -82,8 +82,8 @@ Type=simple
 ExecStart=/usr/local/sbin/httpdate -F example.com https://example.com example.net
 User=httpdate
 Group=httpdate
-CapabilityBoundingSet=CAP_SYS_TIME
-AmbientCapabilities=CAP_SYS_TIME
+CapabilityBoundingSet=CAP_SYS_TIME CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_SYS_TIME CAP_NET_BIND_SERVICE
 Restart=on-failure
 RestartSec=30
 
@@ -94,6 +94,14 @@ WantedBy=multi-user.target
 This configuration runs `httpdate` in the foreground under the dedicated `httpdate` account. The configured hosts and URLs are queried as supplied; if a server does not return a usable HTTP `Date` header, that sample is ignored.
 
 `CAP_SYS_TIME` allows the service to adjust the system clock without running as root. Keep this capability limited to the service, as changing system time is a privileged operation.
+
+`CAP_NET_BIND_SERVICE` allows the service to bind privileged ports below 1024. It is required when the NTP server is enabled with `-S`, which listens on UDP port 123:
+
+```ini
+ExecStart=/usr/local/sbin/httpdate -F -S example.com https://example.com example.net
+```
+
+Without this capability the NTP server fails to start with a "permission denied" error when binding port 123. When `-S` is not used, the extra capability is simply unused; alternatively, remove `CAP_NET_BIND_SERVICE` from the unit and run without `-S`.
 
 Load the unit, enable it at boot, and start it:
 
@@ -181,6 +189,7 @@ With `-S`, httpdate runs a minimal NTP server that serves the synchronized local
 ## Troubleshooting
 
 - **The service cannot adjust the clock:** confirm that the unit grants `CAP_SYS_TIME` and inspect `journalctl -u httpdate.service`.
+- **The NTP server cannot bind port 123:** confirm that the unit grants `CAP_NET_BIND_SERVICE` (or that the service runs as root), and that nothing else is already listening on UDP port 123 (check with `ss -ulpn | grep :123`).
 - **No suitable servers are available:** check DNS, network access, proxy settings, and whether the configured servers return a valid HTTP `Date` header.
 - **The time estimate is inaccurate:** Accuracy depends on server quality, network latency, and the precision setting. On networks where NTP is available, dedicated time-synchronization solutions such as `chrony`, `OpenNTPD`, `ntpd`, or `ntpd-rs` are generally preferable.
 - **Proxy authentication fails:** verify the proxy URL format, ensure credentials are correct, and URL-encode reserved characters in usernames or passwords. You can also configure proxy settings through the standard `http_proxy` or `https_proxy` environment variables.
@@ -189,4 +198,3 @@ With `-S`, httpdate runs a minimal NTP server that serves the synchronized local
 ## License
 
 `httpdate` is licensed under the GPL-2.0-or-later, the same license as its predecessor `htpdate`. See [LICENSE](LICENSE) for details.
-

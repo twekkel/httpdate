@@ -17,19 +17,18 @@
 #include <time.h>
 #include <unistd.h>
 
-#define NTP_EPOCH_OFFSET 2208988800ULL
-#define NTP_PACKET_SIZE 48
-#define NTP_PORT 123
-#define NTP_STRATUM 5
-#define NTP_VERSION 4
+#define NTP_EPOCH_OFFSET        2208988800ULL
+#define NTP_PACKET_SIZE         48
+#define NTP_PORT                123
+#define NTP_STRATUM             5
+#define NTP_VERSION             4
 
-/* NTP packet, as defined by RFC 5905. All multi-byte fields are on the wire
- * in network byte order. */
+// NTP packet, as defined by RFC 5905
 struct ntp_packet {
-  uint8_t li_vn_mode;
-  uint8_t stratum;
-  uint8_t poll;
-  int8_t precision;
+  uint8_t  li_vn_mode;
+  uint8_t  stratum;
+  uint8_t  poll;
+  int8_t   precision;
   uint32_t root_delay;
   uint32_t root_dispersion;
   uint32_t ref_id;
@@ -101,9 +100,10 @@ static int create_ntp_socket(void) {
 
 /* The main loop receives the datagram exactly once and passes its contents
  * and receive timestamp here. */
-static void handle_ntp_request(int sockfd, const struct ntp_packet *request,
-                                const struct sockaddr_in *client_addr, socklen_t client_len,
-                                const struct timeval *tv_recv) {
+static void handle_ntp_request(
+    int sockfd, const struct ntp_packet *request,
+    const struct sockaddr_in *client_addr, socklen_t client_len,
+    const struct timeval *tv_recv) {
   unsigned int version = (request->li_vn_mode >> 3) & 0x07;
   unsigned int mode = request->li_vn_mode & 0x07;
 
@@ -150,8 +150,7 @@ static void handle_ntp_request(int sockfd, const struct ntp_packet *request,
   response.tx_timestamp_sec = htonl(tx_sec);
   response.tx_timestamp_frac = htonl(tx_frac);
 
-  ssize_t sent = sendto(sockfd, &response, sizeof(response), 0,
-                        (const struct sockaddr *)client_addr, client_len);
+  ssize_t sent = sendto(sockfd, &response, sizeof(response), 0, (const struct sockaddr *)client_addr, client_len);
   if (sent < 0) {
     perror("sendto");
   } else if ((size_t)sent != sizeof(response)) {
@@ -214,14 +213,13 @@ int run_ntp_server(int foreground, int ready_fd) {
           NTP_PORT, NTP_STRATUM);
 
   while (running) {
-    /* Leave room for NTP extension fields; only the first 48 bytes are
-     * the fixed header used by this minimal server. */
+    // Leave room for NTP extension fields; only the first 48 bytes are
+    // the fixed header used by this minimal server.
     uint8_t buf[512];
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
-    ssize_t bytes_read = recvfrom(sockfd, buf, sizeof(buf), 0,
-                                  (struct sockaddr *)&client_addr, &client_len);
+    ssize_t bytes_read = recvfrom(sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_len);
     if (bytes_read < 0) {
       if (errno == EINTR)
         continue;
@@ -240,7 +238,6 @@ int run_ntp_server(int foreground, int ready_fd) {
     if ((size_t)bytes_read < sizeof(struct ntp_packet))
       continue;
 
-    /* Copy the fixed header to an aligned local object. */
     struct ntp_packet request;
     memcpy(&request, buf, sizeof(request));
 

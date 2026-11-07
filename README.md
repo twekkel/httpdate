@@ -148,8 +148,8 @@ For example, a daily time synchronization,
 | `-h` | Display help. |
 | `-p precision` | Set precision from 1 to 9; default is 3. |
 | `-P proxy` | Use an HTTP proxy, for example `http://proxy:port`, `http://username:password@proxy:port`, or `host:port`. |
-| `-S` | Run a minimal NTP server (stratum 5, UDP port 123); requires `-D` or `-F`. |
 | `-s` | Set the system time immediately. |
+| `-S` | Run a minimal NTP server (stratum 5, UDP port 123); requires `-D` or `-F`. |
 | `-t` | Disable time sanity check, default limit is 1000 s. |
 | `-v` | Display version information. |
 | `-x` | Adjust time and clock frequency to compensate for drift; intended for continuous daemon operation. |

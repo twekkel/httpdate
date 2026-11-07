@@ -3,21 +3,21 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-46acdDFhnStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
+[\-46acdDFhnsStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
 HTTP timestamps have a resolution of one second. To find the sub-second offset, httpdate queries each server several times at different positions within the second (see \fB\-p\fR) and locates the second boundary by bisection. With several servers, the median offset is used to discard 'false tickers'. The remaining offsets are averaged, weighted by the inverse of their round-trip-time.
 .P
-By default httpdate only displays the offset and does not change the clock. Use \fB\-a\fR, \fB\-s\fR, \fB\-x\fR or \fB\-D\fR to change it. Changing the clock requires root privileges.
+By default httpdate only displays the offset and does not change the clock. Use \fB\-a\fR, \fB\-s\fR, \fB\-x\fR or \fB\-D\\-F\fR to change it. Changing the clock requires root privileges.
 .P
 Accuracy depends on network latency and on the precision setting (~125 ms by default), and is more stable with multiple servers. If this is not sufficient, use ntpd or chrony.
 .SH "OPTIONS"
 .TP
-.I \-4
+.B \-4
 Force IPv4 name resolution only. Default behaviour is to try IPv6 first and fall back to IPv4.
 .TP
-.I \-6
+.B \-6
 Force IPv6 name resolution only.
 .TP
 .B \-a
@@ -47,11 +47,11 @@ Number of steps per server, from 1 to 9 (default 3). Each step halves the uncert
 .BI \-P " proxy"
 Use a proxy server, for example \fIhttp://proxy:port\fR or \fIproxy:port\fR. Overrides the proxy environment variables.
 .TP
-.B \-S
-Run a minimal NTP server on UDP port 123 that serves the synchronized local time to NTP clients (stratum 5). Only valid in daemon mode (see \fB\-D\fR and \fB\-F\fR), because the NTP server needs a continuously synchronized clock. Binding port 123 requires root or the \fICAP_NET_BIND_SERVICE\fR capability.
-.TP
 .B \-s
 Set (step) the clock immediately. Offsets are applied in full, also when smaller than one second. Not recommended together with \fB\-D\fR.
+.TP
+.B \-S
+Run a minimal NTP server on UDP port 123 that serves the synchronized local time to NTP clients (stratum 5). Only valid in daemon mode (see \fB\-D\fR and \fB\-F\fR), because the NTP server needs a continuously synchronized clock. Binding port 123 requires root or the \fICAP_NET_BIND_SERVICE\fR capability.
 .TP
 .B \-t
 Disable the time sanity check (offsets exceeding 1000 s are ignored by default).

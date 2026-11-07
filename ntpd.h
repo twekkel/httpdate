@@ -4,8 +4,8 @@
 #include <signal.h>
 #include <stdint.h>
 
-// Run NTP server with specified stratum
+// Run NTP server
 // If foreground is non-zero, runs in foreground; otherwise daemonizes
-void run_ntp_server(uint8_t stratum, int foreground);
+static int run_ntp_server(int foreground);
 
 #endif // NTPD_H

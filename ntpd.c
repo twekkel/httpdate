@@ -17,10 +17,11 @@
 #include <time.h>
 #include <unistd.h>
 
-#define NTP_PORT 123
-#define NTP_VERSION 4
-#define NTP_PACKET_SIZE 48
 #define NTP_EPOCH_OFFSET 2208988800ULL
+#define NTP_PACKET_SIZE 48
+#define NTP_PORT 123
+#define NTP_STRATUM 5
+#define NTP_VERSION 4
 
 /* NTP packet, as defined by RFC 5905. All multi-byte fields are on the wire
  * in network byte order. */
@@ -131,7 +132,7 @@ static void handle_ntp_request(int sockfd,
 
     /* LI=0 (no warning), VN=4, Mode=4 (server). */
     response.li_vn_mode = (uint8_t)((NTP_VERSION << 3) | 4);
-    response.stratum = stratum;
+    response.stratum = NTP_STRATUM;
     response.poll = 6;
     response.precision = -6;
 
@@ -169,14 +170,7 @@ static void handle_ntp_request(int sockfd,
     }
 }
 
-void run_ntp_server(uint8_t stratum, int foreground)
-{
-    if (stratum < 1 || stratum > 15) {
-        fprintf(stderr, "Invalid NTP stratum %u (expected 1..15)\n",
-                (unsigned int)stratum);
-        return;
-    }
-
+static int run_ntp_server(int foreground) {
     running = 1;
 
     int sockfd = create_ntp_socket();
@@ -211,9 +205,8 @@ void run_ntp_server(uint8_t stratum, int foreground)
             if (fd > STDERR_FILENO)
                 close(fd);
         }
-        if (chdir("/") < 0) {
-            /* Continue running; changing directory is not essential. */
-        }
+        if (setsid() < 0 || chdir("/") < 0)
+          return -1;
     }
 
     struct sigaction sa;
@@ -225,7 +218,7 @@ void run_ntp_server(uint8_t stratum, int foreground)
     sigaction(SIGQUIT, &sa, NULL);
 
     fprintf(stderr, "NTP server started on UDP port %d, stratum %u\n",
-            NTP_PORT, (unsigned int)stratum);
+            NTP_PORT, NTP_STRATUM);
 
     while (running) {
         /* Leave room for NTP extension fields; only the first 48 bytes are
@@ -260,7 +253,7 @@ void run_ntp_server(uint8_t stratum, int foreground)
         memcpy(&request, buf, sizeof(request));
 
         handle_ntp_request(sockfd, &request, &client_addr, client_len,
-                           &tv_recv, stratum);
+                           &tv_recv, NTP_STRATUM);
     }
 
     close(sockfd);

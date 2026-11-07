@@ -99,7 +99,7 @@ static enum sync_mode sync_mode = SYNC_MODE_NONE;
 static const char *proxy = NULL;
 static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
-static int ntp_server    = 0; // 0 = disabled, 1 = run NTP server (stratum 5)
+static int ntp_server    = 0;
 
 #define HISTORY_SIZE 8
 
@@ -562,7 +562,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
 static void show_help(void) {
   printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnStvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-46acdDFhnsStvx] [-p #] [-P proxy] <URLs> ...\n\n"
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
@@ -574,11 +574,11 @@ static void show_help(void) {
          "  -n    ignore proxy environment variables\n"
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
-         "  -S    run a minimal NTP server (stratum 5), requires -D or -F\n"
          "  -s    set time\n"
+         "  -S    run a minimal NTP server (daemon mode)\n"
          "  -t    disable time sanity check (limit: %ld s)\n"
          "  -v    show version\n"
-         "  -x    adjust time and clock frequency (drift, use with -D)\n",
+         "  -x    adjust time and frequency to correct clock drift (daemon mode)\n",
          DEFAULT_PRECISION, MAX_OFFSET);
 }
 
@@ -673,7 +673,7 @@ int main(int argc, char *argv[]) {
   int       precision  = DEFAULT_PRECISION;
 
   int       param;
-  while ((param = getopt(argc, argv, "46acdhDFnp:P:Sstvx")) != -1)
+  while ((param = getopt(argc, argv, "46acdhDFnp:P:sStvx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -716,11 +716,11 @@ int main(int argc, char *argv[]) {
       case 'P':
         proxy = optarg;
         break;
-      case 'S':
-        ntp_server = 1;
-        break;
       case 's':
         sync_mode = SYNC_MODE_SET;
+        break;
+      case 'S':
+        ntp_server = 1;
         break;
       case 't':
         sanity_mode = SANITY_CHECK_DISABLED;
@@ -784,12 +784,10 @@ int main(int argc, char *argv[]) {
       exit(1);
     }
     if (pid == 0) {
-      // Child process: run NTP server in foreground
-      run_ntp_server(5, 1);
-      exit(0);
+      exit(run_ntp_server(1));
     }
     // Parent continues with httpdate
-    print_log(0, "NTP server started on port 123, stratum 5");
+    print_log(0, "NTP server started");
   }
 
   // Per-URL offset history, kept across iterations to track server quality

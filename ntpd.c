@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 25637af38da34167575449c2e5218f55f5426319)#define _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
 
 #include "ntpd.h"
 

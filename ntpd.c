@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+successfully downloaded text file (SHA: c17a1d03fe59fab58962bd111950da6420875a9d)#define _DEFAULT_SOURCE
 
 #include "ntpd.h"
 
@@ -170,13 +170,13 @@ static void handle_ntp_request(int sockfd,
     }
 }
 
-static int run_ntp_server(int foreground) {
+int run_ntp_server(int foreground) {
     running = 1;
 
     int sockfd = create_ntp_socket();
     if (sockfd < 0) {
         fprintf(stderr, "Failed to create NTP server socket\n");
-        return;
+        return -1;
     }
 
     if (!foreground) {
@@ -184,11 +184,11 @@ static int run_ntp_server(int foreground) {
         if (pid < 0) {
             perror("fork");
             close(sockfd);
-            return;
+            return -1;
         }
         if (pid > 0) {
             close(sockfd);
-            return;
+            return 0;
         }
 
         if (setsid() < 0) {
@@ -205,8 +205,6 @@ static int run_ntp_server(int foreground) {
             if (fd > STDERR_FILENO)
                 close(fd);
         }
-        if (setsid() < 0 || chdir("/") < 0)
-          return -1;
     }
 
     struct sigaction sa;
@@ -258,4 +256,5 @@ static int run_ntp_server(int foreground) {
 
     close(sockfd);
     fprintf(stderr, "NTP server stopped\n");
+    return 0;
 }

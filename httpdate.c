@@ -59,7 +59,7 @@ static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct ti
 #define MAX_URLS                8
 #define NS_SEC                  1000000000L
 #define MAX_DRIFT               32768000L       // 500 PPM
-#define VERSION                 "1.0.1"
+#define VERSION                 "1.0.2"
 
 enum cert_mode {
   CERT_CHECK_ENABLED,

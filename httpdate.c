@@ -621,15 +621,31 @@ static int parse_args(int argc, char *argv[]) {
   bool        no_proxy      = false;
   int         param;
 
+  // Bitmask of the options to reject impossible combinations after parsing
+  enum {
+    OPT_IPV4       = 1 << 0,
+    OPT_IPV6       = 1 << 1,
+    OPT_ADJUST     = 1 << 2,
+    OPT_SET        = 1 << 3,
+    OPT_DRIFT      = 1 << 4,
+    OPT_NTP        = 1 << 5,
+    OPT_DAEMON     = 1 << 6,
+    OPT_FOREGROUND = 1 << 7
+  };
+  int seen = 0;
+
   while ((param = getopt(argc, argv, "46acdDFhnp:P:sStvx")) != -1)
     switch(param) {
       case '4':
+        seen |= OPT_IPV4;
         ip_resolve = CURL_IPRESOLVE_V4;
         break;
       case '6':
+        seen |= OPT_IPV6;
         ip_resolve = CURL_IPRESOLVE_V6;
         break;
       case 'a':
+        seen |= OPT_ADJUST;
         sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'c':
@@ -639,12 +655,14 @@ static int parse_args(int argc, char *argv[]) {
         if (verbose < 3) verbose++;
         break;
       case 'D':
+        seen |= OPT_DAEMON;
         daemon_mode = true;
         background = true;
         set_log_dest(LOG_DEST_SYSLOG);
         if (!is_drift_mode()) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'F':
+        seen |= OPT_FOREGROUND;
         daemon_mode = true;
         set_log_dest(LOG_DEST_CONSOLE);
         if (!is_drift_mode()) sync_mode = SYNC_MODE_ADJUST;
@@ -670,9 +688,11 @@ static int parse_args(int argc, char *argv[]) {
         proxy_arg = optarg;
         break;
       case 's':
+        seen |= OPT_SET;
         sync_mode = SYNC_MODE_SET;
         break;
       case 'S':
+        seen |= OPT_NTP;
         ntp_server = true;
         sync_mode  = SYNC_MODE_DRIFT;
         break;
@@ -683,6 +703,7 @@ static int parse_args(int argc, char *argv[]) {
         printf("httpdate version %s\n", VERSION);
         exit(0);
       case 'x':
+        seen |= OPT_DRIFT;
         sync_mode = SYNC_MODE_DRIFT;
         break;
       case '?':
@@ -690,6 +711,23 @@ static int parse_args(int argc, char *argv[]) {
         show_help();
         exit(1);
     }
+
+  if ((seen & (OPT_IPV4 | OPT_IPV6)) == (OPT_IPV4 | OPT_IPV6)) {
+    fprintf(stderr, "Error: -4 and -6 are mutually exclusive\n");
+    exit(1);
+  }
+  if ((seen & (OPT_DAEMON | OPT_FOREGROUND)) == (OPT_DAEMON | OPT_FOREGROUND)) {
+    fprintf(stderr, "Error: -D and -F are mutually exclusive\n");
+    exit(1);
+  }
+  if (__builtin_popcount(seen & (OPT_ADJUST | OPT_SET | OPT_DRIFT | OPT_NTP)) > 1) {
+    fprintf(stderr, "Error: -a, -s, -x and -S are mutually exclusive\n");
+    exit(1);
+  }
+  if ((seen & OPT_SET) && (seen & (OPT_DAEMON | OPT_FOREGROUND))) {
+    fprintf(stderr, "Error: -s is not valid in daemon mode (-D or -F)\n");
+    exit(1);
+  }
 
   // -x uses maximum precision unless -p is explicitly specified.
   if (is_drift_mode() && !precision_set)

@@ -1,5 +1,6 @@
 # Compiled object files
 *.o
+*.d
 
 # Binary output
 httpdate

@@ -3,7 +3,7 @@
 httpdate \- Time synchronization via HTTP/HTTPS
 .SH "SYNOPSIS"
 .B httpdate
-[\-46acdDFhnsStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] \fIURL\fR ...
+[\-46acdDFhnsStvx] [\-p \fIprecision\fR] [\-P \fIproxy\fR] [\-M \fIdirectory\fR] \fIURL\fR ...
 .SH "DESCRIPTION"
 Httpdate retrieves the date and time from the Date header of HTTP or HTTPS responses and compares it with the local clock. It uses libcurl, so it works through proxy servers and supports HTTPS.
 .P
@@ -40,6 +40,9 @@ Show help information.
 .TP
 .B \-n
 Ignore proxy environment variables.
+.TP
+.BI \-M " directory"
+Write Prometheus metrics to this directory, in the textfile format expected by node_exporter: httpdate.prom with the offset, resolution, round trip time and the number of valid servers, and ntpd.prom with the NTP request counters (only with \fB\-S\fR). The files are written atomically after every poll. This option is only available when httpdate was built with metrics support (the default; build with \fBmake WITH_METRICS=0\fR to exclude it).
 .TP
 .BI \-p " precision"
 Number of steps per server, from 1 to 9 (default 3). Each step halves the uncertainty of the second boundary, so the resolution is about 1/2^\fIprecision\fR seconds. A higher precision increases accuracy and the time needed per server. Offsets smaller than this resolution are ignored.

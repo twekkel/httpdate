@@ -141,6 +141,7 @@ For example, a daily time synchronization,
 | `-F` | Run daemon mode in the foreground, suitable for systemd. |
 | `-h` | Display help. |
 | `-n` | Ignore proxy environment variables. |
+| `-M directory` | Write Prometheus metrics files (`httpdate.prom`, `ntpd.prom`) to this directory. |
 | `-p precision` | Set precision from 1 to 9; default is 3. |
 | `-P proxy` | Use an HTTP proxy, for example `http://proxy:port`, `http://username:password@proxy:port`, or `host:port`. |
 | `-s` | Set the system time immediately. |
@@ -182,6 +183,17 @@ If the username or password contains reserved URI characters such as `@`, `:`, `
 With `-S`, httpdate runs a minimal NTP server that serves the synchronized local time to NTP clients. This is useful on networks where NTP is blocked upstream: httpdate synchronizes over HTTP(S), and local clients can sync from it via NTP. The option is only available in daemon mode (`-D` or `-F`), since the NTP server needs a continuously synchronized clock. Binding NTP port 123 requires root or the `CAP_NET_BIND_SERVICE` capability.
 
 The NTP server is compiled in by default. Build with `make WITH_NTP=0` to exclude it; the `-S` option is then unavailable.
+
+## Prometheus metrics
+
+With `-M <dir>`, httpdate writes Prometheus metrics to the given directory, in the textfile format expected by node_exporter's textfile collector:
+
+- `httpdate.prom`: the last measured offset, resolution, round trip time and the number of valid servers, written after every poll.
+- `ntpd.prom` (only with `-S`): NTP request counters for answered, ignored and dropped requests, flushed at most once per second.
+
+Files are written atomically (temporary file plus rename), so collectors never read a partial file.
+
+Metrics are compiled in by default. Build with `make WITH_METRICS=0` to exclude them; the `-M` option is then unavailable.
 
 ## Troubleshooting
 

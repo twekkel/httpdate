@@ -44,6 +44,15 @@
 #define NS_SEC                  1000000000L
 #define VERSION                 "1.1.0"
 
+// Prometheus metrics (-M) are a build-time feature, like the NTP server
+#ifdef WITH_METRICS
+#define OPTSTR_METRICS "M:"
+#define USAGE_METRICS  " [-M dir]"
+#else
+#define OPTSTR_METRICS ""
+#define USAGE_METRICS  ""
+#endif
+
 enum sync_mode {
   SYNC_MODE_NONE,
   SYNC_MODE_SET,
@@ -58,6 +67,7 @@ static bool daemon_mode  = false;   // -D or -F
 static bool ntp_server   = false;
 static bool sanity_mode  = true;
 static const char *proxy = NULL;
+static const char *metrics_dir = NULL;   // -M: Prometheus metrics directory
 static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
 #ifdef WITH_NTP
@@ -398,9 +408,9 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 static void show_help(void) {
   printf("httpdate version "VERSION"\n"
 #ifdef WITH_NTP
-         "Usage: httpdate [-46acdDFhnsStvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-46acdDFhnsStvx] [-p #] [-P proxy]" USAGE_METRICS " <URLs> ...\n\n"
 #else
-         "Usage: httpdate [-46acdDFhnstvx] [-p #] [-P proxy] <URLs> ...\n\n"
+         "Usage: httpdate [-46acdDFhnstvx] [-p #] [-P proxy]" USAGE_METRICS " <URLs> ...\n\n"
 #endif
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
@@ -411,6 +421,9 @@ static void show_help(void) {
          "  -F    run daemon in foreground\n"
          "  -h    help\n"
          "  -n    ignore proxy environment variables\n"
+#ifdef WITH_METRICS
+         "  -M    write Prometheus metrics to this directory\n"
+#endif
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
          "  -s    set time\n"
@@ -479,7 +492,7 @@ static int start_ntp_server(void) {
   }
   if (pid == 0) {
     close(ready[0]);
-    _exit(run_ntp_server(ready[1]));
+    _exit(run_ntp_server(ready[1], metrics_dir));
   }
 
   close(ready[1]);
@@ -613,6 +626,49 @@ static int update_clock(double avgtime, long long resolution, double rtt, int in
   return interval > DEFAULT_MIN_SLEEP ? interval - 1 : interval;
 }
 
+#ifdef WITH_METRICS
+// Write httpdate.prom atomically (tmp + rename), as expected by
+// node_exporter's textfile collector
+static void write_httpdate_metrics(double offset, long long resolution,
+  double rtt, int valid_servers) {
+  if (!metrics_dir) return;
+
+  char path[PATH_MAX], tmp_path[PATH_MAX];
+  int n = snprintf(path, sizeof(path), "%s/httpdate.prom", metrics_dir);
+  if (n < 0 || (size_t)n >= sizeof(path)) {
+    print_log(1, "Metrics directory path too long");
+    return;
+  }
+  snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+  FILE *f = fopen(tmp_path, "w");
+  if (!f) {
+    print_log(1, "Failed to open %s: %s", tmp_path, strerror(errno));
+    return;
+  }
+
+  fprintf(f,
+    "# HELP httpdate_offset_seconds Last measured clock offset (positive: local clock ahead).\n"
+    "# TYPE httpdate_offset_seconds gauge\n"
+    "httpdate_offset_seconds %.9f\n"
+    "# HELP httpdate_resolution_seconds Uncertainty of the last measurement.\n"
+    "# TYPE httpdate_resolution_seconds gauge\n"
+    "httpdate_resolution_seconds %.9f\n"
+    "# HELP httpdate_rtt_seconds Round trip time of the fastest server.\n"
+    "# TYPE httpdate_rtt_seconds gauge\n"
+    "httpdate_rtt_seconds %.9f\n"
+    "# HELP httpdate_servers_valid Servers that passed all filters.\n"
+    "# TYPE httpdate_servers_valid gauge\n"
+    "httpdate_servers_valid %d\n",
+    offset, (double)resolution / NS_SEC, rtt, valid_servers);
+
+  if (fclose(f) != 0)
+    print_log(1, "Failed to write %s: %s", tmp_path, strerror(errno));
+  else if (rename(tmp_path, path) < 0)
+    print_log(1, "Failed to rename %s: %s", tmp_path, strerror(errno));
+}
+#endif
+
 // Parse the command line into the globals. Returns the precision.
 static int parse_args(int argc, char *argv[]) {
   int         precision     = DEFAULT_PRECISION;
@@ -634,7 +690,7 @@ static int parse_args(int argc, char *argv[]) {
   };
   int seen = 0;
 
-  while ((param = getopt(argc, argv, "46acdDFhnp:P:sStvx")) != -1)
+  while ((param = getopt(argc, argv, "46acdDFhn" OPTSTR_METRICS "p:P:sStvx")) != -1)
     switch(param) {
       case '4':
         seen |= OPT_IPV4;
@@ -672,6 +728,9 @@ static int parse_args(int argc, char *argv[]) {
         exit(0);
       case 'n':
         no_proxy = true;
+        break;
+      case 'M':
+        metrics_dir = optarg;
         break;
       case 'p': {
         char *endptr;
@@ -752,6 +811,13 @@ static int parse_args(int argc, char *argv[]) {
     exit(1);
   }
 
+#ifndef WITH_METRICS
+  if (metrics_dir) {
+    fprintf(stderr, "Error: metrics support not compiled in (build with: make WITH_METRICS=1)\n");
+    exit(1);
+  }
+#endif
+
   if (argc - optind > MAX_URLS) {
     print_log(1, "Too many URLs specified");
     exit(1);
@@ -782,9 +848,12 @@ static void confirm_startup(void) {
 // Measure all servers once and combine them into one offset and resolution.
 // Returns 0 on success, -1 when no usable time was obtained.
 static int poll_servers(int argc, char *argv[], int precision,
-  double *avgtime, long long *resolution, double *min_rtt) {
+  double *avgtime, long long *resolution, double *min_rtt,
+  int *valid_servers) {
   struct timesample samples[MAX_URLS] = {0};
   int valid_samples = 0;
+
+  *valid_servers = 0;
 
   for (int i = optind; i < argc; i++) {
     double offset = 0.0;
@@ -833,6 +902,8 @@ static int poll_servers(int argc, char *argv[], int precision,
     print_log(1, "No servers passed RTT quality and consensus filters");
     return -1;
   }
+
+  *valid_servers = valid_samples;
   return 0;
 }
 
@@ -865,8 +936,13 @@ int main(int argc, char *argv[]) {
     double avgtime = 0.0, rtt = 0.0;
     long long resolution = 0;
 
-    int next = poll_servers(argc, argv, precision, &avgtime, &resolution, &rtt) < 0
+    int valid_servers = 0;
+    int next = poll_servers(argc, argv, precision, &avgtime, &resolution, &rtt, &valid_servers) < 0
              ? -1 : update_clock(avgtime, resolution, rtt, interval);
+#ifdef WITH_METRICS
+    if (next >= 0)
+      write_httpdate_metrics(avgtime, resolution, rtt, valid_servers);
+#endif
 
     if (next < 0 && !daemon_mode) {
       curl_global_cleanup();

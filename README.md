@@ -91,9 +91,11 @@ RestartSec=30
 WantedBy=multi-user.target
 ```
 
-This configuration runs `httpdate` in the foreground under the dedicated `httpdate` account. The configured hosts and URLs are queried as supplied; if a server does not return a usable HTTP `Date` header, that sample is ignored.
+This configuration runs `httpdate` under the dedicated `httpdate` account. The configured hosts and URLs are queried as supplied; if a server does not return a usable HTTP `Date` header, that sample is ignored.
 
 `CAP_SYS_TIME` allows the service to adjust the system clock without running as root. Keep this capability limited to the service, as changing system time is a privileged operation.
+
+`CAP_NET_BIND_SERVICE` allows the service to bind privileged ports below 1024. It is required when the NTP server is enabled with `-S`, which listens on UDP port 123.
 
 Load the unit, enable it at boot, and start it:
 
@@ -132,18 +134,20 @@ For example, a daily time synchronization,
 | --- | --- |
 | `-4` | Force IPv4 resolution. |
 | `-6` | Force IPv6 resolution. |
-| `-a` | Adjust time gradually using the system clock adjustment interface. |
+| `-a` | Adjust time gradually using the system clock adjustment interface; offsets larger than 1 s step the clock. |
 | `-c` | Disable SSL certificate check |
 | `-d` | Enable verbose/debug output; repeat for more detail. |
 | `-D` | Run as a daemon in the background. |
 | `-F` | Run daemon mode in the foreground, suitable for systemd. |
 | `-h` | Display help. |
+| `-n` | Ignore proxy environment variables. |
 | `-p precision` | Set precision from 1 to 9; default is 3. |
 | `-P proxy` | Use an HTTP proxy, for example `http://proxy:port`, `http://username:password@proxy:port`, or `host:port`. |
 | `-s` | Set the system time immediately. |
+| `-S` | Run a minimal NTP server; requires daemon mode. |
 | `-t` | Disable time sanity check, default limit is 1000 s. |
 | `-v` | Display version information. |
-| `-x` | Adjust time and clock frequency to compensate for drift; intended for continuous daemon operation. |
+| `-x` | Adjust time and clock frequency to compensate for drift; requires daemon mode. Offsets larger than 1 s step the clock. |
 
 Examples:
 
@@ -156,6 +160,9 @@ sudo httpdate -s http://example.com
 
 # Run continuously in the foreground with drift correction
 httpdate -Fx -p8 https://example.com
+
+# Also serve time to NTP clients on the local network
+sudo httpdate -FS https://example.com https://example.net
 
 # Run through a proxy server
 httpdate -P 'http://username:password@proxy.example.net:8080' \
@@ -170,9 +177,16 @@ The program also honors libcurl's standard proxy environment variables, includin
 
 If the username or password contains reserved URI characters such as `@`, `:`, `/`, or `#`, they should be URL-encoded.
 
+## NTP server
+
+With `-S`, httpdate runs a minimal NTP server that serves the synchronized local time to NTP clients. This is useful on networks where NTP is blocked upstream: httpdate synchronizes over HTTP(S), and local clients can sync from it via NTP. The option is only available in daemon mode (`-D` or `-F`), since the NTP server needs a continuously synchronized clock. Binding NTP port 123 requires root or the `CAP_NET_BIND_SERVICE` capability.
+
+The NTP server is compiled in by default. Build with `make WITH_NTP=0` to exclude it; the `-S` option is then unavailable.
+
 ## Troubleshooting
 
 - **The service cannot adjust the clock:** confirm that the unit grants `CAP_SYS_TIME` and inspect `journalctl -u httpdate.service`.
+- **The NTP server cannot bind port 123:** confirm that the unit grants `CAP_NET_BIND_SERVICE` (or that the service runs as root), and that nothing else is already listening on UDP port 123 (check with `ss -ulpn | grep :123`).
 - **No suitable servers are available:** check DNS, network access, proxy settings, and whether the configured servers return a valid HTTP `Date` header.
 - **The time estimate is inaccurate:** Accuracy depends on server quality, network latency, and the precision setting. On networks where NTP is available, dedicated time-synchronization solutions such as `chrony`, `OpenNTPD`, `ntpd`, or `ntpd-rs` are generally preferable.
 - **Proxy authentication fails:** verify the proxy URL format, ensure credentials are correct, and URL-encode reserved characters in usernames or passwords. You can also configure proxy settings through the standard `http_proxy` or `https_proxy` environment variables.

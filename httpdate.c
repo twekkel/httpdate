@@ -4,83 +4,45 @@
 #if LIBCURL_VERSION_NUM < 0x073d00
 #error "httpdate needs libcurl 7.61.0 or newer"
 #endif
+#include "log.h"
+#include "utils.h"
+#ifdef WITH_NTP
+#include "ntpd.h"
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <stdarg.h>
 #include <sys/time.h>
+#include <sys/timex.h>
+#include <sys/wait.h>
 #include <syslog.h>
+#include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
 
-#if defined(__APPLE__)
-#ifndef CLOCK_REALTIME
-#define CLOCK_REALTIME 0
-#endif
-#ifndef TIMER_ABSTIME
-#define TIMER_ABSTIME 1
-#endif
-static inline int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec *req, struct timespec *rem) {
-  (void)clock_id; (void)rem;
-  if (flags & TIMER_ABSTIME) {
-    struct timespec now;
-    clock_gettime(CLOCK_REALTIME, &now);
-    time_t diff_sec = req->tv_sec - now.tv_sec;
-    long diff_nsec = req->tv_nsec - now.tv_nsec;
-    if (diff_nsec < 0) { diff_sec--; diff_nsec += 1000000000L; }
-    if (diff_sec < 0 || (diff_sec == 0 && diff_nsec <= 0)) return 0;
-    struct timespec ts = { .tv_sec = diff_sec, .tv_nsec = diff_nsec };
-    while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
-  } else {
-    struct timespec ts = *req;
-    while (nanosleep(&ts, &ts) == -1 && errno == EINTR);
-  }
-  return 0;
-}
-#endif
 
-#include <sys/timex.h>
-
-#if defined __NetBSD__ || defined __FreeBSD__ || defined __APPLE__
+#if defined __NetBSD__ || defined __FreeBSD__
 #define adjtimex ntp_adjtime
 #endif
 
-#define DEFAULT_MIN_SLEEP       10              // 2^10  ~17 minutes
 #define DEFAULT_MAX_SLEEP       14              // 2^14  ~4.5 hours
+#define DEFAULT_MIN_SLEEP       10              // 2^10  ~17 minutes
 #define DEFAULT_PRECISION       3               // 3  +/- 125 ms
 #define DRIFT_TAU               14400.0         // 4-hour smoothing
-#define PRINTBUFFERSIZE         1024
+#define DRIFT_TO_FREQ           (1e6 * 65536.0)
+#define MAX_DRIFT               32768000L       // 500 PPM
+#define STEP_THRESHOLD          1.0             // Offsets > threshold: stepped
 #define MAX_OFFSET              1000L
 #define MAX_PPM                 2
 #define MAX_URLS                8
 #define NS_SEC                  1000000000L
-#define MAX_DRIFT               32768000L       // 500 PPM
-#define VERSION                 "1.0.2"
-
-enum cert_mode {
-  CERT_CHECK_ENABLED,
-  CERT_CHECK_DISABLED
-};
-
-enum log_dest {
-  LOG_DEST_CONSOLE,
-  LOG_DEST_SYSLOG
-};
-
-enum run_mode {
-  RUN_ONESHOT,
-  RUN_BACKGROUND,
-  RUN_FOREGROUND
-};
-
-enum sanity_mode {
-  SANITY_CHECK_ENABLED,
-  SANITY_CHECK_DISABLED
-};
+#define VERSION                 "1.1.0"
 
 enum sync_mode {
   SYNC_MODE_NONE,
@@ -88,117 +50,34 @@ enum sync_mode {
   SYNC_MODE_ADJUST,
   SYNC_MODE_DRIFT
 };
-
-static enum cert_mode cert_mode = CERT_CHECK_ENABLED;
-static enum log_dest log_dest = LOG_DEST_CONSOLE;
-static enum run_mode run_mode = RUN_ONESHOT;
-static enum sanity_mode sanity_mode = SANITY_CHECK_ENABLED;
 static enum sync_mode sync_mode = SYNC_MODE_NONE;
 
+static bool background   = false;
+static bool cert_mode    = true;
+static bool daemon_mode  = false;   // -D or -F
+static bool ntp_server   = false;
+static bool sanity_mode  = true;
 static const char *proxy = NULL;
 static int verbose       = 0;
 static long ip_resolve   = CURL_IPRESOLVE_WHATEVER;
+#ifdef WITH_NTP
+static volatile sig_atomic_t ntp_pid  = -1;  // written by signal handlers
+static volatile sig_atomic_t ntp_died = 0;   // set when the NTP child exits
+#endif
 
 struct timesample {
   const char *url;
   double offset;
   double rtt;
+  long long resolution;
 };
 
-static int num(const char *p, int n) {
-  int v = 0;
-  while (n--) {
-    unsigned d = (unsigned char)*p++ - '0';
-    if (d > 9) return -1;
-    v = v * 10 + (int)d;
-  }
-  return v;
+static inline bool is_slew_mode(void) {
+  return sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT;
 }
 
-// "DD Mon YYYY HH:MM:SS" (UTC) -> Unix time, or -1 on error
-static long long parse_imf_fixdate(const char *s) {
-  static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-  static const short cum[13] = {0,31,59,90,120,151,181,212,243,273,304,334,365};
-
-  const int d = num(s, 2);
-  if (d < 1 || s[2] != ' ')
-    return -1;
-
-  int mon;
-  for (mon = 0; mon < 12; mon++)
-    if (strncmp(s + 3, months + 3 * mon, 3) == 0)
-      break;
-  if (mon == 12 || s[6] != ' ')
-    return -1;
-
-  const int y = num(s + 7, 4);
-  if (y < 1970 || s[11] != ' ')
-    return -1;
-
-  const int h = num(s + 12, 2);
-  if (h < 0 || h > 23 || s[14] != ':')
-    return -1;
-
-  const int mi = num(s + 15, 2);
-  if (mi < 0 || mi > 59 || s[17] != ':')
-    return -1;
-
-  const int sec = num(s + 18, 2);
-  if (sec < 0 || sec > 59)
-    return -1;
-
-  const int leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-  if (d > cum[mon + 1] - cum[mon] + (leap && mon == 1))
-    return -1;
-
-  const long long days = 365LL * (y - 1970)
-                       + (y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400 - 477
-                       + cum[mon] + (leap && mon > 1) + (d - 1);
-  return ((days * 24 + h) * 60 + mi) * 60 + sec;
-}
-
-// Insertion sort is more efficient (and smaller) than qsort for small lists
-static void insert_sort(double a[], int length) {
-  for (int i = 1; i < length; i++) {
-    double value = a[i];
-    int j;
-
-    for (j = i - 1; j >= 0 && a[j] > value; j--) {
-      a[j + 1] = a[j];
-    }
-    a[j + 1] = value;
-  }
-}
-
-static double dabs(double x) {
-  return x < 0 ? -x : x;
-}
-
-// Seconds -> rounded milliseconds
-static long long to_ms(double sec) {
-  return (long long)(sec * 1000.0 + (sec < 0 ? -0.5 : 0.5));
-}
-
-static void print_log(int is_error, char *format, ...) {
-  va_list args;
-  char buf[PRINTBUFFERSIZE];
-
-  va_start(args, format);
-  (void) vsnprintf(buf, sizeof(buf), format, args);
-  va_end(args);
-
-  switch(log_dest) {
-    case LOG_DEST_CONSOLE:
-      fprintf(is_error ? stderr : stdout, "%s\n", buf);
-      fflush(is_error ? stderr : stdout);
-      break;
-    case LOG_DEST_SYSLOG:
-      syslog(is_error ? LOG_WARNING : LOG_INFO, "%s", buf);
-      break;
-    default:
-      fprintf(stderr, "%s\n", "Invalid logmode, aborting");
-      abort();
-    }
+static inline bool is_drift_mode(void) {
+  return sync_mode == SYNC_MODE_DRIFT;
 }
 
 static size_t get_remote_time(void *contents, size_t size,
@@ -230,16 +109,18 @@ static int set_clock(double timedelta) {
   now.tv_sec  = (time_t)timedelta;
   now.tv_nsec = (long)((timedelta - (double)now.tv_sec) * 1e9);
 
-  struct tm *tm = gmtime(&now.tv_sec);
-  if (tm) {
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", tm);
-    print_log(0, "Set time: %s", buffer);
-  }
-
   int ret = clock_settime(CLOCK_REALTIME, &now);
 
   if (ret) {
     print_log(1, "error setting time: %s", strerror(errno));
+    return ret;
+  }
+
+  // Log the new time only after the clock change succeeded
+  struct tm *tm = gmtime(&now.tv_sec);
+  if (tm) {
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S GMT", tm);
+    print_log(0, "Set time: %s", buffer);
   }
 
   return ret;
@@ -260,43 +141,41 @@ static int adjust_clock(double timedelta) {
   return adjtime(&timeofday, NULL);
 }
 
-static int set_status(void) {
+// Mark the clock synchronized (status 0 clears STA_UNSYNC) and report the
+// error estimate: all arguments in seconds
+static int set_status(double offset, double resolution, double rtt) {
   struct timex txc = {0};
 
   txc.modes = MOD_STATUS | MOD_ESTERROR | MOD_MAXERROR;
-  txc.status &= ~STA_UNSYNC;
+  txc.esterror = (long)(resolution / 2 * 1e6);
+  txc.maxerror = (long)((dabs(offset) + resolution / 2 + rtt / 2) * 1e6);
   if (verbose)
     print_log(0, "Set clock synchronized");
 
   return adjtimex(&txc);
 }
 
-static int adjust_freq(double drift, float confidence) {
+static double clampd(double v, double lo, double hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static int adjust_freq(double drift, double confidence) {
   struct timex tmx = {0};
-  long old_freq;
 
-  adjtimex(&tmx);
-  old_freq = tmx.freq;
-
-  // Clamp in the double domain: converting NaN/out-of-range to long is UB
-  double freq_target = 65536e6 * drift * confidence;
-  if (freq_target != freq_target) return -1;
-
-  // Slew-rate limit: MAX_PPM change per call
-  double max_delta = (double)(MAX_PPM * 65536L);
-  if (freq_target > max_delta) {
-    freq_target = max_delta;
-  } else if (freq_target < -max_delta) {
-    freq_target = -max_delta;
+  if (adjtimex(&tmx) < 0) {
+    print_log(1, "adjtimex read failed: %s", strerror(errno));
+    return -1;
   }
 
-  long freq_delta = (long)freq_target;
+  double target = DRIFT_TO_FREQ * drift * confidence;
+  if (target != target) {  // NaN
+    print_log(1, "invalid drift/confidence, skipping");
+    return -1;
+  }
 
-  tmx.freq = old_freq + freq_delta;
-
-  // Enforce absolute safety bounds
-  if ((tmx.freq < -MAX_DRIFT) || (tmx.freq > MAX_DRIFT))
-    tmx.freq = (tmx.freq < 0 ? -1 : 1) * MAX_DRIFT;
+  double max_delta = (double)MAX_PPM * 65536.0;
+  long delta = (long)clampd(target, -max_delta, max_delta);
+  tmx.freq = (long)clampd((double)(tmx.freq + delta), -MAX_DRIFT, MAX_DRIFT);
   tmx.modes = MOD_FREQUENCY;
 
   if (adjtimex(&tmx) < 0) {
@@ -308,14 +187,16 @@ static int adjust_freq(double drift, float confidence) {
   return 0;
 }
 
+// The round trip time of the request: valid per transfer, also when the
+// keep-alive connection is reused (connect/lookup timers would stay 0)
 static long long get_rtt(CURL *curl) {
-  curl_off_t t_pre = 0, t_start = 0;
-  curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
+  curl_off_t t_start = 0, t_pre = 0;
   curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &t_start);
+  curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &t_pre);
   return (long long)(t_start - t_pre) * 1000LL;
 }
 
-static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
+static void setup_curl_handle(CURL *curl, struct curl_slist **list, const char *url, char *remotetime) {
   *list = curl_slist_append(*list, "Cache-Control: no-cache");
 
   if (proxy)
@@ -330,7 +211,7 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
   curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "httpdate/"VERSION);
 
-  if (cert_mode == CERT_CHECK_DISABLED) {
+  if (!cert_mode) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
   }
@@ -338,13 +219,12 @@ static CURLcode setup_curl_handle(CURL *curl, struct curl_slist **list, const ch
   if (verbose > 2) {
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   }
-
-  return CURLE_OK;
 }
 
-/* Measure the offset of one server.
-   Returns 0 on success (results in *offset and *rtt), -1 on failure. */
-static int bisect(const char *url, int precision, double *offset, double *rtt) {
+// Measure the offset of one server.
+// Returns 0 on success, -1 on failure.
+static int bisect(const char *url, int precision, double *offset, double *rtt,
+  int *polls_done) {
   CURL *curl = NULL;
   struct curl_slist *list = NULL;
   CURLcode res;
@@ -362,13 +242,9 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
   int polls = 0;
 
   curl = curl_easy_init();
-  if (!curl) {
-    return -1;
-  }
+  if (!curl) return -1;
 
-  if (setup_curl_handle(curl, &list, url, remotetime) != CURLE_OK) {
-    goto cleanup;
-  }
+  setup_curl_handle(curl, &list, url, remotetime);
 
   // Eliminate connection setup time (DNS, TCP, TLS) before the poll loop.
   res = curl_easy_perform(curl);
@@ -454,6 +330,8 @@ static int bisect(const char *url, int precision, double *offset, double *rtt) {
 
   if (verbose > 1) print_log(0, "when: %lld, nap: %lld", when, nap);
 
+  *polls_done = polls;
+
   *offset = -(double)first_offset + 1.0 - (double)when / (double)NS_SEC;
 
   // Average RTT is only used to weight the servers in main()
@@ -470,7 +348,7 @@ cleanup:
 
 static int calculate_offset(struct timesample samples[], int valid_samples,
   double *out) {
-  // Two servers that disagree: trust the one with the lower RTT
+  // Two servers that disagree: trust the one with the lowest RTT
   if (valid_samples == 2 && dabs(samples[0].offset - samples[1].offset) > 0.5) {
     *out = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
     return 0;
@@ -518,8 +396,12 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 }
 
 static void show_help(void) {
-  printf("httpdate version " VERSION "\n"
-         "Usage: httpdate [-acdDFhnstvx] [-p #] [-P proxy] <URLs> ...\n\n"
+  printf("httpdate version "VERSION"\n"
+#ifdef WITH_NTP
+         "Usage: httpdate [-46acdDFhnsStvx] [-p #] [-P proxy] <URLs> ...\n\n"
+#else
+         "Usage: httpdate [-46acdDFhnstvx] [-p #] [-P proxy] <URLs> ...\n\n"
+#endif
          "  -4    force IPv4 resolution\n"
          "  -6    force IPv6 resolution\n"
          "  -a    adjust time gradually\n"
@@ -532,73 +414,186 @@ static void show_help(void) {
          "  -p    precision (1..9, default: %d)\n"
          "  -P    use proxy server (e.g., http://proxy:port or host:port)\n"
          "  -s    set time\n"
+#ifdef WITH_NTP
+         "  -S    run a minimal NTP server (daemon mode)\n"
+#endif
          "  -t    disable time sanity check (limit: %ld s)\n"
          "  -v    show version\n"
-         "  -x    adjust time and clock frequency (drift, use with -D)\n",
+         "  -x    adjust time and frequency to correct clock drift (daemon mode)\n",
          DEFAULT_PRECISION, MAX_OFFSET);
 }
 
-static int daemonize(void) {
+#ifdef WITH_NTP
+// Stop the NTP server child, so it does not outlive this process
+static void stop_ntp_server(void) {
+  if (ntp_pid > 0) {
+    kill((pid_t)ntp_pid, SIGTERM);
+    // Wait until the child is gone, so UDP port 123 is free again
+    while (waitpid((pid_t)ntp_pid, NULL, 0) < 0 && errno == EINTR);
+    ntp_pid = -1;
+  }
+}
+
+// On SIGTERM, stop NTP server
+static void handle_signal(int sig) {
+  stop_ntp_server();
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+// Flag the NTP child's exit and main loop logs it
+static void handle_sigchld(int sig) {
+  (void)sig;
+  while (waitpid(-1, NULL, WNOHANG) > 0);
+  ntp_pid = -1;
+  ntp_died = 1;
+}
+#endif
+
+// Read one byte from fd (retry on EINTR), then close it. Returns 1 on success.
+static int read_byte(int fd, char *c) {
+  ssize_t n;
+  do {
+    n = read(fd, c, 1);
+  } while (n < 0 && errno == EINTR);
+  close(fd);
+  return n == 1;
+}
+
+#ifdef WITH_NTP
+// Fork the NTP server, wait until it listens, and install the signal handlers.
+// Returns 0 on success, -1 on failure.
+static int start_ntp_server(void) {
+  int ready[2];
+  if (pipe(ready) < 0) {
+    print_log(1, "Failed to create pipe for NTP server: %s", strerror(errno));
+    return -1;
+  }
+
   pid_t pid = fork();
-
-  if (pid < 0)
+  if (pid < 0) {
+    print_log(1, "Failed to fork for NTP server: %s", strerror(errno));
+    close(ready[0]);
+    close(ready[1]);
     return -1;
-  if (pid > 0)
+  }
+  if (pid == 0) {
+    close(ready[0]);
+    _exit(run_ntp_server(ready[1]));
+  }
+
+  close(ready[1]);
+  char c;
+  if (!read_byte(ready[0], &c)) {
+    print_log(1, "NTP server failed to start");
+    return -1;
+  }
+  ntp_pid = pid;
+
+  // Stop the NTP server on termination, and reap it when it exits first
+  struct sigaction sa = {0};
+  sigemptyset(&sa.sa_mask);
+  sa.sa_handler = handle_signal;
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGTERM, &sa, NULL);
+  sigaction(SIGHUP, &sa, NULL);
+  sa.sa_handler = handle_sigchld;
+  sigaction(SIGCHLD, &sa, NULL);
+
+  return 0;
+}
+#endif
+
+// Child reports startup status through this fd; the parent exits 0 or 1.
+static int confirm_fd = -1;
+
+// Detach from the terminal. The parent waits for startup, including the NTP
+// bind, so "httpdate -D" returns the actual startup result.
+static void daemonize(void) {
+  int startup[2];
+  if (pipe(startup) < 0) {
+    print_log(1, "Failed to create pipe for daemon startup: %s", strerror(errno));
+    exit(1);
+  }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    print_log(1, "Failed to fork for daemon: %s", strerror(errno));
+    exit(1);
+  }
+  if (pid > 0) {
+    close(startup[1]);
+    char c = '0';
+    if (!read_byte(startup[0], &c) || c != '1') {
+      print_log(1, "Daemon startup failed");
+      exit(1);
+    }
     _exit(0);
+  }
 
-  if (setsid() < 0 || chdir("/") < 0)
-    return -1;
+  close(startup[0]);
+  if (setsid() < 0 || chdir("/") < 0) {
+    print_log(1, "Daemon initialization failed: %s", strerror(errno));
+    close(startup[1]);
+    exit(1);
+  }
 
   int fd = open("/dev/null", O_RDWR);
-  if (fd < 0)
-    return -1;
+  if (fd < 0) {
+    print_log(1, "Failed to open /dev/null: %s", strerror(errno));
+    close(startup[1]);
+    exit(1);
+  }
   dup2(fd, STDIN_FILENO);
   dup2(fd, STDOUT_FILENO);
   dup2(fd, STDERR_FILENO);
   if (fd > STDERR_FILENO)
     close(fd);
 
-  return 0;
+  confirm_fd = startup[1];
 }
 
-static int update_clock(double avgtime, int precision, int interval) {
+// Returns the next sleep interval (a power of two exponent), or -1 on failure
+static int update_clock(double avgtime, long long resolution, double rtt, int interval) {
   static time_t starttime = 0;
 
-  if (verbose || run_mode == RUN_ONESHOT)
+  if (verbose || !daemon_mode)
     print_log(0, "Offset: %lld ms", to_ms(avgtime));
 
+  double threshold = (double)resolution / NS_SEC;
+
   // Consider +/- .5s a valid sync state
-  if (sync_mode == SYNC_MODE_DRIFT && dabs(avgtime) < 0.5)
-    set_status();
-
-  // Measurement resolution is +/- 1/2^precision seconds
-  double threshold = 1.0 / (double)(1 << precision);
-
-  if (dabs(avgtime) <= threshold) {
-    if (interval < DEFAULT_MAX_SLEEP) {
-      interval++;
-    }
-    return interval;
+  if (is_drift_mode() && dabs(avgtime) < 0.5) {
+    if (set_status(avgtime, threshold, rtt) < 0)
+      print_log(1, "adjtimex status failed: %s", strerror(errno));
   }
+
+  // Increase interval when avgtime is within measurement uncertainty
+  if (dabs(avgtime) <= threshold)
+    return interval < DEFAULT_MAX_SLEEP ? interval + 1 : interval;
 
   // Avoid bouncing between upper/lower limit when (almost) in sync
   if (dabs(avgtime) < 1.0 && sync_mode != SYNC_MODE_SET) avgtime /= 2;
 
-  // Too large to slew (broken RTC, -t): step once, then back to normal
-  if (sync_mode != SYNC_MODE_NONE && dabs(avgtime) > MAX_OFFSET) {
-    if (set_clock(avgtime) == 0)
-      sanity_mode = SANITY_CHECK_ENABLED;
+  // Too large to slew (adjtime is ~0.5 ms/s): step instead of slewing
+  if (is_slew_mode() && dabs(avgtime) > STEP_THRESHOLD) {
+    int ret = set_clock(avgtime);
+    if (ret == 0)
+      sanity_mode = true;
     starttime = 0;
-    return DEFAULT_MIN_SLEEP;
+    return ret < 0 ? -1 : DEFAULT_MIN_SLEEP;
   }
 
-  if (sync_mode == SYNC_MODE_SET) set_clock(avgtime);
-  if (sync_mode == SYNC_MODE_ADJUST || sync_mode == SYNC_MODE_DRIFT) {
-    if (adjust_clock(avgtime) < 0)
+  if (sync_mode == SYNC_MODE_SET && set_clock(avgtime) < 0)
+    return -1;
+  if (is_slew_mode()) {
+    if (adjust_clock(avgtime) < 0) {
       print_log(1, "adjtime failed: %s", strerror(errno));
+      return -1;
+    }
   }
 
-  if (run_mode != RUN_ONESHOT && sync_mode == SYNC_MODE_DRIFT) {
+  if (daemon_mode && is_drift_mode()) {
     if (starttime) {
       // Calculate systematic clock drift
       double elapsed = (double)(time(NULL) - starttime);
@@ -606,30 +601,27 @@ static int update_clock(double avgtime, int precision, int interval) {
       print_log(0, "Drift %.2f PPM, %.2f s/day", drift * 1e6, drift * 86400);
 
       // Adjust the clock frequency, weighted by elapsed time
-      if (adjust_freq(drift, (float)(elapsed / (elapsed + DRIFT_TAU))) < 0)
+      if (adjust_freq(drift, elapsed / (elapsed + DRIFT_TAU)) < 0)
         print_log(1, "Frequency change failed");
     }
     starttime = time(NULL);
   }
 
-  /* Only force DEFAULT_MIN_SLEEP for large corrections,
-     otherwise ease back off
-  */
-  if (dabs(avgtime) > (threshold * 2.0)) {
-    interval = DEFAULT_MIN_SLEEP;
-  } else if (interval > DEFAULT_MIN_SLEEP) {
-    interval--;
-  }
-
-  return interval;
+  // DEFAULT_MIN_SLEEP for large corrections, otherwise ease back off
+  if (dabs(avgtime) > (threshold * 2.0))
+    return DEFAULT_MIN_SLEEP;
+  return interval > DEFAULT_MIN_SLEEP ? interval - 1 : interval;
 }
 
-int main(int argc, char *argv[]) {
-  int       interval   = DEFAULT_MIN_SLEEP;
-  int       precision  = DEFAULT_PRECISION;
+// Parse the command line into the globals. Returns the precision.
+static int parse_args(int argc, char *argv[]) {
+  int         precision     = DEFAULT_PRECISION;
+  int         precision_set = 0;
+  const char *proxy_arg     = NULL;
+  bool        no_proxy      = false;
+  int         param;
 
-  int       param;
-  while ((param = getopt(argc, argv, "46acdhDFnp:P:stvx")) != -1)
+  while ((param = getopt(argc, argv, "46acdDFhnp:P:sStvx")) != -1)
     switch(param) {
       case '4':
         ip_resolve = CURL_IPRESOLVE_V4;
@@ -641,49 +633,57 @@ int main(int argc, char *argv[]) {
         sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'c':
-        cert_mode = CERT_CHECK_DISABLED;
+        cert_mode = false;
         break;
       case 'd':
         if (verbose < 3) verbose++;
         break;
       case 'D':
-        run_mode = RUN_BACKGROUND;
-        log_dest = LOG_DEST_SYSLOG;
-        if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
+        daemon_mode = true;
+        background = true;
+        set_log_dest(LOG_DEST_SYSLOG);
+        if (!is_drift_mode()) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'F':
-        run_mode = RUN_FOREGROUND;
-        log_dest = LOG_DEST_CONSOLE;
-        if (sync_mode != SYNC_MODE_DRIFT) sync_mode = SYNC_MODE_ADJUST;
+        daemon_mode = true;
+        set_log_dest(LOG_DEST_CONSOLE);
+        if (!is_drift_mode()) sync_mode = SYNC_MODE_ADJUST;
         break;
       case 'h':
         show_help();
         exit(0);
       case 'n':
-        if (!proxy) proxy = "";
+        no_proxy = true;
         break;
-      case 'p':
-        precision = atoi(optarg);
-        if (precision < 1 || precision > 9) {
+      case 'p': {
+        char *endptr;
+        precision = (int)strtol(optarg, &endptr, 10);
+        if (endptr == optarg || *endptr != '\0' ||
+            precision < 1 || precision > 9) {
           fprintf(stderr, "Error: precision must be between 1 and 9\n");
           exit(1);
         }
+        precision_set = 1;
         break;
+      }
       case 'P':
-        proxy = optarg;
+        proxy_arg = optarg;
         break;
       case 's':
         sync_mode = SYNC_MODE_SET;
         break;
+      case 'S':
+        ntp_server = true;
+        sync_mode  = SYNC_MODE_DRIFT;
+        break;
       case 't':
-        sanity_mode = SANITY_CHECK_DISABLED;
+        sanity_mode = false;
         break;
       case 'v':
         printf("httpdate version %s\n", VERSION);
         exit(0);
       case 'x':
         sync_mode = SYNC_MODE_DRIFT;
-        precision = 9;
         break;
       case '?':
       default:
@@ -691,8 +691,26 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+  // -x uses maximum precision unless -p is explicitly specified.
+  if (is_drift_mode() && !precision_set)
+    precision = 9;
+  // -P overrides -n; otherwise use proxy environment variables.
+  proxy = proxy_arg ? proxy_arg : (no_proxy ? "" : NULL);
+
   if (argv[optind] == NULL) {
     show_help();
+    exit(1);
+  }
+
+#ifndef WITH_NTP
+  if (ntp_server) {
+    fprintf(stderr, "Error: NTP server support not compiled in (build with: make WITH_NTP=1)\n");
+    exit(1);
+  }
+#endif
+
+  if (ntp_server && !daemon_mode) {
+    fprintf(stderr, "Error: -S is only valid in daemon mode (-D or -F)\n");
     exit(1);
   }
 
@@ -701,76 +719,127 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  switch (run_mode) {
-  case RUN_ONESHOT:
-    // Run once without daemonizing or startup logging.
-    break;
+  return precision;
+}
 
-  case RUN_BACKGROUND:
-    openlog("httpdate", LOG_PID | LOG_CONS, LOG_DAEMON);
+// Daemonize or log the start, depending on the run mode
+static void start_run_mode(void) {
+  if (background) {
+    openlog("httpdate", LOG_PID, LOG_DAEMON);
+    daemonize();
+  }
+  if (daemon_mode)
+    print_log(0, "httpdate version "VERSION" started");
+}
 
-    if (daemonize() < 0) {
-      perror("daemon initialization failed");
-      exit(1);
+// The -D parent is still waiting: confirm that startup succeeded
+static void confirm_startup(void) {
+  if (confirm_fd < 0) return;
+  if (write(confirm_fd, "1", 1) < 0)
+    print_log(1, "write confirm byte: %s", strerror(errno));
+  close(confirm_fd);
+  confirm_fd = -1;
+}
+
+// Measure all servers once and combine them into one offset and resolution.
+// Returns 0 on success, -1 when no usable time was obtained.
+static int poll_servers(int argc, char *argv[], int precision,
+  double *avgtime, long long *resolution, double *min_rtt) {
+  struct timesample samples[MAX_URLS] = {0};
+  int valid_samples = 0;
+
+  for (int i = optind; i < argc; i++) {
+    double offset = 0.0;
+    double rtt = 0.0;
+    int polls_done = 0;
+
+    if (bisect(argv[i], precision, &offset, &rtt, &polls_done) < 0)
+      continue;
+
+    if (sanity_mode && dabs(offset) > MAX_OFFSET) {
+      if (verbose)
+        print_log(0, "%-25s | Offset exceeds %ld s, ignored", argv[i], MAX_OFFSET);
+      continue;
     }
 
-    print_log(0, "httpdate version "VERSION" started");
-    break;
+    // The offset uncertainty is the last bisection step
+    long long res = NS_SEC >> polls_done;
 
-  case RUN_FOREGROUND:
-    print_log(0, "httpdate version "VERSION" started");
-    break;
+    if (verbose) print_log(0, "%-25s | Offset: %lld ms | RTT: %lld ms | Resolution: %lld ms",
+                            argv[i], to_ms(offset), to_ms(rtt), to_ms((double)res / NS_SEC));
+    samples[valid_samples].url = argv[i];
+    samples[valid_samples].offset = offset;
+    samples[valid_samples].rtt = rtt;
+    samples[valid_samples].resolution = res;
+    valid_samples++;
   }
 
+  if (valid_samples == 0) {
+    print_log(1, "No suitable servers available");
+    return -1;
+  }
+
+  // Use median resolution so one noisy server doesn't skew the measurement
+  double tmp[MAX_URLS];
+  for (int j = 0; j < valid_samples; j++)
+    tmp[j] = (double)samples[j].resolution;
+  insert_sort(tmp, valid_samples);
+  *resolution = (long long)tmp[valid_samples / 2];
+
+  // The lowest RTT is the most accurate server
+  *min_rtt = samples[0].rtt;
+  for (int j = 1; j < valid_samples; j++)
+    if (samples[j].rtt < *min_rtt) *min_rtt = samples[j].rtt;
+
+  if (calculate_offset(samples, valid_samples, avgtime) < 0) {
+    print_log(1, "No servers passed RTT quality and consensus filters");
+    return -1;
+  }
+  return 0;
+}
+
+int main(int argc, char *argv[]) {
+  int interval  = DEFAULT_MIN_SLEEP;
+  int precision = parse_args(argc, argv);
+
+  start_run_mode();
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
+#ifdef WITH_NTP
+  if (ntp_server && start_ntp_server() < 0) {
+    curl_global_cleanup();
+    exit(1);
+  }
+#endif
+
+  confirm_startup();
+
   do {
-    struct timesample samples[MAX_URLS] = {0};
-    int valid_samples = 0;
-    int have_time = 0;
-    double avgtime = 0.0;
-
-    for (int i = optind; i < argc; i++) {
-      double offset = 0.0;
-      double rtt = 0.0;
-
-      if (bisect(argv[i], precision, &offset, &rtt) < 0)
-        continue;
-
-      if (sanity_mode == SANITY_CHECK_ENABLED && dabs(offset) > MAX_OFFSET) {
-        if (verbose)
-          print_log(0, "%-25s | Offset exceeds %ld s, ignored", argv[i], MAX_OFFSET);
-        continue;
-      }
-
-      if (verbose) print_log(0, "%-25s | Offset: %lld ms | RTT: %lld ms", argv[i], to_ms(offset), to_ms(rtt));
-      samples[valid_samples].url = argv[i];
-      samples[valid_samples].offset = offset;
-      samples[valid_samples].rtt = rtt;
-      valid_samples++;
+#ifdef WITH_NTP
+    // The NTP child was reaped by the SIGCHLD handler; log it here,
+    // where async-unsafe functions are allowed again
+    if (ntp_died) {
+      ntp_died = 0;
+      print_log(1, "NTP server exited unexpectedly");
     }
+#endif
 
-    if (valid_samples > 0) {
-      if (calculate_offset(samples, valid_samples, &avgtime) == 0)
-        have_time = 1;
-      else
-        print_log(1, "No servers passed RTT quality and consensus filters");
-    } else {
-      print_log(1, "No suitable servers available");
-    }
+    double avgtime = 0.0, rtt = 0.0;
+    long long resolution = 0;
 
-    if (have_time) {
-      interval = update_clock(avgtime, precision, interval);
-    } else if (run_mode == RUN_ONESHOT) {
+    int next = poll_servers(argc, argv, precision, &avgtime, &resolution, &rtt) < 0
+             ? -1 : update_clock(avgtime, resolution, rtt, interval);
+
+    if (next < 0 && !daemon_mode) {
       curl_global_cleanup();
       exit(1);
     }
+    if (next >= 0)
+      interval = next;
 
-    if (run_mode != RUN_ONESHOT) {
-      sleep(1<<interval);
-    }
-
-  } while (run_mode != RUN_ONESHOT);
+    if (daemon_mode)
+      sleep(1 << interval);
+  } while (daemon_mode);
 
   curl_global_cleanup();
   return 0;

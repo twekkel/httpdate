@@ -33,6 +33,7 @@
 #define NTP_ROOT_DISPERSION     0x00002000      // 125 ms, when adjtimex fails
 #define NTP_MAXERROR_USEC       500000L         // 500 ms cap on kernel maxerror
 #define NTP_STATE_TTL           60              // s between adjtimex() reads
+#define NTP_METRICS_FLUSH_TTL   10              // s between ntpd.prom writes
 
 #if defined __NetBSD__ || defined __FreeBSD__
 #define adjtimex ntp_adjtime
@@ -98,12 +99,12 @@ static void write_ntpd_metrics(void) {
     print_log(1, "Failed to rename %s: %s", tmp_path, strerror(errno));
 }
 
-// Flush the counters at most once per second, so a request storm
-// does not turn into a write storm
+// Flush the counters at most once per NTP_METRICS_FLUSH_TTL seconds, so a
+// request storm does not turn into a write storm
 static void maybe_write_ntpd_metrics(void) {
   unsigned long total = requests_ok + requests_bad + requests_dropped;
   time_t now = time(NULL);
-  if (total != metrics_flushed && now != metrics_flushed_at) {
+  if (total != metrics_flushed && now - metrics_flushed_at >= NTP_METRICS_FLUSH_TTL) {
     write_ntpd_metrics();
     metrics_flushed = total;
     metrics_flushed_at = now;

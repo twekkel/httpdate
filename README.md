@@ -189,7 +189,7 @@ The NTP server is compiled in by default. Build with `make WITH_NTP=0` to exclud
 With `-M <dir>`, httpdate writes Prometheus metrics to the given directory, in the textfile format expected by node_exporter's textfile collector:
 
 - `httpdate.prom`: the last measured offset, resolution, round trip time and the number of valid servers, written after every poll.
-- `ntpd.prom` (only with `-S`): NTP request counters for answered, ignored and dropped requests, flushed at most once per second.
+- `ntpd.prom` (only with `-S`): NTP request counters for answered, ignored and dropped requests, flushed at most once every 10 seconds.
 
 Files are written atomically (temporary file plus rename), so collectors never read a partial file.
 

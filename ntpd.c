@@ -32,6 +32,7 @@
 #define NTP_ROOT_DISPERSION     0x00002000      // 125 ms, when adjtimex fails
 #define NTP_MAXERROR_USEC       500000L         // 500 ms cap on kernel maxerror
 #define NTP_STATE_TTL           60              // s between adjtimex() reads
+#define NTP_METRICS_FLUSH_TTL   10              // s between ntpd.prom writes
 
 #if defined __NetBSD__ || defined __FreeBSD__
 #define adjtimex ntp_adjtime
@@ -59,6 +60,38 @@ struct ntp_packet {
 _Static_assert(sizeof(struct ntp_packet) == NTP_PACKET_SIZE, "NTP packet must be exactly 48 bytes");
 
 static volatile sig_atomic_t running = 1;
+
+#ifdef WITH_METRICS
+static const char *ntpd_metrics_dir = NULL;
+static unsigned long requests_ok;        // answered NTPv3/v4 client requests
+static unsigned long requests_bad;       // ignored: wrong mode or version
+static unsigned long requests_dropped;   // runt packets
+static unsigned long metrics_flushed;    // counter total at the last file write
+static time_t metrics_flushed_at;        // second of the last file write
+
+// Expose the request counters as ntpd.prom
+static void write_ntpd_metrics(void) {
+  write_metrics_file(ntpd_metrics_dir, "ntpd.prom",
+    "# HELP httpdate_ntp_requests_total NTP requests received by the built-in server.\n"
+    "# TYPE httpdate_ntp_requests_total counter\n"
+    "httpdate_ntp_requests_total{result=\"ok\"} %lu\n"
+    "httpdate_ntp_requests_total{result=\"bad\"} %lu\n"
+    "httpdate_ntp_requests_total{result=\"dropped\"} %lu\n",
+    requests_ok, requests_bad, requests_dropped);
+}
+
+// Flush the counters at most once per NTP_METRICS_FLUSH_TTL seconds, so a
+// request storm does not turn into a write storm
+static void maybe_write_ntpd_metrics(void) {
+  unsigned long total = requests_ok + requests_bad + requests_dropped;
+  time_t now = time(NULL);
+  if (total != metrics_flushed && now - metrics_flushed_at >= NTP_METRICS_FLUSH_TTL) {
+    write_ntpd_metrics();
+    metrics_flushed = total;
+    metrics_flushed_at = now;
+  }
+}
+#endif
 
 static void handle_signal(int sig) {
   (void)sig;
@@ -185,8 +218,12 @@ static void handle_ntp_request(
   unsigned int mode = request->li_vn_mode & 0x07;
 
   // Answer NTPv3 and v4 client requests; ignore everything else
-  if (mode != NTP_MODE_CLIENT || (version != 3 && version != 4))
+  if (mode != NTP_MODE_CLIENT || (version != 3 && version != 4)) {
+#ifdef WITH_METRICS
+    requests_bad++;
+#endif
     return;
+  }
 
   // The kernel's view of the clock, maintained by httpdate: the maximum
   // error becomes the root dispersion, and an unsynchronized clock is
@@ -240,9 +277,19 @@ static void handle_ntp_request(
   } else if ((size_t)sent != sizeof(response)) {
     print_log(1, "sendto: incomplete NTP response");
   }
+#ifdef WITH_METRICS
+  if (sent == (ssize_t)sizeof(response))
+    requests_ok++;
+#endif
 }
 
-int run_ntp_server(int ready_fd) {
+int run_ntp_server(int ready_fd, const char *metrics_dir) {
+#ifndef WITH_METRICS
+  (void)metrics_dir;
+#else
+  ntpd_metrics_dir = metrics_dir;
+#endif
+
   int sockfd = create_ntp_socket();
   if (sockfd < 0) {
     print_log(1, "Failed to create NTP server socket");
@@ -271,6 +318,14 @@ int run_ntp_server(int ready_fd) {
 
   print_log(0, "NTP server started");
 
+#ifdef WITH_METRICS
+  // Counters start at zero; write the file so collectors see the server
+  if (ntpd_metrics_dir) {
+    write_ntpd_metrics();
+    metrics_flushed_at = time(NULL);
+  }
+#endif
+
   while (running) {
     // Tolerate extension fields but ignore > 48-byte header
     struct ntp_packet request;
@@ -292,8 +347,13 @@ int run_ntp_server(int ready_fd) {
 
     // Drop runt packets before spending a clock read on them. The length
     // check is a single compare, so it does not skew the receive timestamp.
-    if ((size_t)bytes_read < sizeof(struct ntp_packet))
+    if ((size_t)bytes_read < sizeof(struct ntp_packet)) {
+#ifdef WITH_METRICS
+      requests_dropped++;
+      maybe_write_ntpd_metrics();
+#endif
       continue;
+    }
 
     struct timespec ts_recv;
     if (clock_gettime(CLOCK_REALTIME, &ts_recv) < 0) {
@@ -302,6 +362,9 @@ int run_ntp_server(int ready_fd) {
     }
 
     handle_ntp_request(sockfd, &request, &client_addr, client_len, &ts_recv);
+#ifdef WITH_METRICS
+    maybe_write_ntpd_metrics();
+#endif
   }
 
   close(sockfd);

@@ -13,4 +13,11 @@ void set_log_dest(enum log_dest dest);
 // is_error selects the error stream / severity.
 void print_log(int is_error, const char *format, ...);
 
+#ifdef WITH_METRICS
+// Write a Prometheus textfile metric to "<dir>/<name>", formatted like
+// printf. The file is written atomically (tmp file + rename) so collectors
+// never read a partial file. Does nothing when dir is NULL.
+void write_metrics_file(const char *dir, const char *name, const char *format, ...);
+#endif
+
 #endif

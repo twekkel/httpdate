@@ -10,6 +10,9 @@ MANDIR ?= $(PREFIX)/share/man
 # The NTP server (-S) is built in by default; set WITH_NTP=0 to build without
 WITH_NTP ?= 1
 
+# Prometheus metrics (-M) are built in by default; set WITH_METRICS=0 to build without
+WITH_METRICS ?= 1
+
 DEPFLAGS = -MMD -MP
 
 OBJS = httpdate.o log.o utils.o
@@ -19,13 +22,18 @@ OBJS += ntpd.o
 NTPCFLAGS = -DWITH_NTP
 endif
 
+METRICSCFLAGS =
+ifeq ($(WITH_METRICS),1)
+METRICSCFLAGS = -DWITH_METRICS
+endif
+
 all: httpdate
 
 httpdate: $(OBJS)
-	$(CC) $(CFLAGS) $(NTPCFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
+	$(CC) $(CFLAGS) $(NTPCFLAGS) $(METRICSCFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 
 %.o: %.c
-	$(CC) $(CFLAGS) $(NTPCFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(NTPCFLAGS) $(METRICSCFLAGS) $(DEPFLAGS) -c $< -o $@
 
 test: httpdate
 	./httpdate example.com example.net https://example.com

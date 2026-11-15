@@ -356,10 +356,11 @@ cleanup:
 }
 
 static int calculate_offset(struct timesample samples[], int valid_samples,
-  double *out) {
+  double *out, int *used_samples) {
   // Two servers that disagree: trust the one with the lowest RTT
   if (valid_samples == 2 && dabs(samples[0].offset - samples[1].offset) > 0.5) {
     *out = (samples[0].rtt < samples[1].rtt) ? samples[0].offset : samples[1].offset;
+    *used_samples = 1;
     return 0;
   }
 
@@ -382,6 +383,7 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
 
   double weighted_sum = 0.0;
   double total_weight = 0.0;
+  int used = 0;
 
   for (int j = 0; j < valid_samples; j++) {
     if (dabs(samples[j].offset - median_offset) > threshold) {
@@ -395,11 +397,13 @@ static int calculate_offset(struct timesample samples[], int valid_samples,
     double weight = 1.0 / (samples[j].rtt + 0.001);
     weighted_sum += samples[j].offset * weight;
     total_weight += weight;
+    used++;
   }
 
   if (total_weight <= 0)
     return -1;
 
+  *used_samples = used;
   *out = weighted_sum / total_weight;
   return 0;
 }
@@ -626,23 +630,34 @@ static int update_clock(double avgtime, long long resolution, double rtt, int in
 }
 
 #ifdef WITH_METRICS
-// Expose the last poll result as httpdate.prom
+// Expose the last poll result as httpdate.prom. A poll without any usable
+// server (valid_servers 0) reports NaN, never the previous poll's values
 static void write_httpdate_metrics(double offset, long long resolution,
   double rtt, int valid_servers) {
+  char offset_s[24], resolution_s[24], rtt_s[24];
+  if (valid_servers > 0) {
+    snprintf(offset_s, sizeof(offset_s), "%.9f", offset);
+    snprintf(resolution_s, sizeof(resolution_s), "%.9f", (double)resolution / NS_SEC);
+    snprintf(rtt_s, sizeof(rtt_s), "%.9f", rtt);
+  } else {
+    strcpy(offset_s, "NaN");
+    strcpy(resolution_s, "NaN");
+    strcpy(rtt_s, "NaN");
+  }
   write_metrics_file(metrics_dir, "httpdate.prom",
-    "# HELP httpdate_offset_seconds Last measured clock offset (positive: local clock ahead).\n"
+    "# HELP httpdate_offset_seconds Last measured clock offset (positive: local clock ahead; NaN if the last poll failed).\n"
     "# TYPE httpdate_offset_seconds gauge\n"
-    "httpdate_offset_seconds %.9f\n"
-    "# HELP httpdate_resolution_seconds Uncertainty of the last measurement.\n"
+    "httpdate_offset_seconds %s\n"
+    "# HELP httpdate_resolution_seconds Uncertainty of the last measurement (NaN if the last poll failed).\n"
     "# TYPE httpdate_resolution_seconds gauge\n"
-    "httpdate_resolution_seconds %.9f\n"
-    "# HELP httpdate_rtt_seconds Round trip time of the fastest server.\n"
+    "httpdate_resolution_seconds %s\n"
+    "# HELP httpdate_rtt_seconds Round trip time of the fastest server (NaN if the last poll failed).\n"
     "# TYPE httpdate_rtt_seconds gauge\n"
-    "httpdate_rtt_seconds %.9f\n"
-    "# HELP httpdate_servers_valid Servers that passed all filters.\n"
+    "httpdate_rtt_seconds %s\n"
+    "# HELP httpdate_servers_valid Servers that passed all filters (0 if the last poll failed).\n"
     "# TYPE httpdate_servers_valid gauge\n"
     "httpdate_servers_valid %d\n",
-    offset, (double)resolution / NS_SEC, rtt, valid_servers);
+    offset_s, resolution_s, rtt_s, valid_servers);
 }
 #endif
 
@@ -875,12 +890,14 @@ static int poll_servers(int argc, char *argv[], int precision,
   for (int j = 1; j < valid_samples; j++)
     if (samples[j].rtt < *min_rtt) *min_rtt = samples[j].rtt;
 
-  if (calculate_offset(samples, valid_samples, avgtime) < 0) {
+  int used = 0;
+  if (calculate_offset(samples, valid_samples, avgtime, &used) < 0) {
     print_log(1, "No servers passed RTT quality and consensus filters");
     return -1;
   }
 
-  *valid_servers = valid_samples;
+  // Only servers that survived the consensus filter count as valid
+  *valid_servers = used;
   return 0;
 }
 
@@ -917,8 +934,8 @@ int main(int argc, char *argv[]) {
     int next = poll_servers(argc, argv, precision, &avgtime, &resolution, &rtt, &valid_servers) < 0
              ? -1 : update_clock(avgtime, resolution, rtt, interval);
 #ifdef WITH_METRICS
-    if (next >= 0)
-      write_httpdate_metrics(avgtime, resolution, rtt, valid_servers);
+    // Write after every poll, also a failed one, so the file never goes stale
+    write_httpdate_metrics(avgtime, resolution, rtt, valid_servers);
 #endif
 
     if (next < 0 && !daemon_mode) {
